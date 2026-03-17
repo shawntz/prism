@@ -1,0 +1,141 @@
+# Analyze item *d'*
+
+## Load data sets
+```{r}
+list.item_dprimes = "data/ses-ret_task-prism_desc-item_dprimes_beh.RDS" |> 
+  read_rds()
+
+ids_to_exclude = "data/ses-ret_task-prism_desc-ids_to_exclude_beh.RDS" |> 
+  read_rds()
+
+cond_levels = c("no_lapse_no_trigger", "lapse_no_trigger", "lapse_trigger")
+cond_labels = c("NoLapse", "Lapse", "LapseTrigger")
+
+df.item_dp_cond = list.item_dprimes$by_subj_x_realtime_trigger |>
+  filter(!participant_id %in% ids_to_exclude) |>
+  mutate(
+    condition = factor(trigger_status, levels = cond_levels, labels = cond_labels)
+  )
+
+# check cell counts before model fitting
+df.item_dp_cond |> 
+  pull(condition) |> 
+  levels()
+
+df.item_dp_cond |> 
+  pull(condition) |> 
+  table()
+```
+
+## Bayesian model
+```{r fig.height=20, warning=FALSE}
+fit.brm_item_dprime_pupil = brm(
+  item_dp ~ 0 + condition,
+  data    = df.item_dp_cond,
+  family  = gaussian(),
+  chains  = 4,
+  cores   = 4,
+  seed    = 512,
+  iter    = 4000,
+  warmup  = 1000,
+  file    = "models/brm_item_dprime_pupil"
+)
+
+fit.brm_item_dprime_pupil |> 
+  summary()
+
+fit.brm_item_dprime_pupil |> 
+  plot(nvariables = 8)
+
+fit.brm_item_dprime_pupil |> 
+  pp_check(ndraws = 100)
+
+fit.brm_item_dprime_pupil |> 
+  as_draws_df() |> 
+  select(starts_with("b_"), sigma) |> 
+  pivot_longer(cols = everything(),
+               names_to = "variable",
+               values_to = "value") |>  
+  ggplot(mapping = aes(y = fct_rev(variable),
+                       x = value)) +
+  stat_halfeye(fill = "lightblue") + 
+  geom_vline(xintercept = 0.0, linetype = "dashed") +
+  theme(axis.title.y = element_blank())
+
+# Lapse < NoLapse
+hypothesis(fit.brm_item_dprime_pupil, "conditionLapse < conditionNoLapse")
+
+# LapseTrigger > Lapse
+hypothesis(fit.brm_item_dprime_pupil, "conditionLapseTrigger > conditionLapse")
+
+# LapseTrigger < NoLapse
+hypothesis(fit.brm_item_dprime_pupil, "conditionLapseTrigger < conditionNoLapse")
+
+fit.brm_item_dprime_pupil |> 
+  emmeans(pairwise ~ condition)
+```
+
+```{r fig.width=6, fig.height=5, fig.dpi=300}
+contrast_draws <- fit.brm_item_dprime_pupil %>%
+  spread_draws(
+    b_conditionNoLapse,
+    b_conditionLapse,
+    b_conditionLapseTrigger
+  ) %>%
+  mutate(
+    `Lapse – No Lapse`         = b_conditionLapse - b_conditionNoLapse,
+    `Trigger – Lapse`          = b_conditionLapseTrigger - b_conditionLapse,
+    `No Lapse – Trigger`       = b_conditionNoLapse - b_conditionLapseTrigger
+  ) %>%
+  pivot_longer(
+    cols      = matches("–"),
+    names_to  = "contrast",
+    values_to = ".value"
+  ) %>%
+  mutate(
+    contrast = factor(contrast, levels = c(
+      "No Lapse – Trigger", # bottom
+      "Trigger – Lapse", # middle
+      "Lapse – No Lapse" # top
+    ))
+  )
+
+fill_by_type <- c(
+  "Lapse – No Lapse"    = "#D62729",
+  "Trigger – Lapse"     = "#F67E00",
+  "No Lapse – Trigger"  = "#FCBF4A"
+)
+
+plot.item_memory_contrasts = contrast_draws %>%
+  ggplot(aes(x = .value, y = contrast, fill = contrast)) +
+  stat_halfeye(
+    point_interval = median_hdi,
+    .width         = c(0.66, 0.9),
+    slab_alpha     = 0.8,
+    normalize      = "panels",
+    point_size      = 4
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.66, color = "black") +
+  geom_text(
+    data = contrast_draws %>% group_by(contrast) %>% summarise(m = median(.value)),
+    aes(x = m, y = contrast, label = contrast),
+    vjust = -0.8, hjust = 0.5, size = 6, inherit.aes = FALSE, family = "Inter"
+  ) +
+  scale_fill_manual(values = fill_by_type) +
+  scale_y_discrete(labels = NULL) +
+  labs(
+    x     = "Posterior contrast (d\u2032)",
+    y     = NULL,
+    title = "Item memory"
+  ) +
+  theme(
+    legend.position    = "none",
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.ticks.y       = element_blank(),
+    axis.line.y        = element_blank()
+  )
+
+plot.item_memory_contrasts
+```
+
