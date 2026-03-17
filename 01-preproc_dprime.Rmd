@@ -1,0 +1,401 @@
+# Preprocess *d'*
+
+## Helper function: Process item memory
+```{r}
+fun.summarize_item_block = function(df, group_vars) {
+  df |> 
+    filter(
+      !trial_burnin,
+      !resp_item_mem_acc %in% c("blink", "NO_RESPONSE")
+    ) |> 
+    group_by(across(all_of(group_vars))) |> 
+    summarise(
+      item_hit       = sum(resp_item_mem_acc == "Item Hit"),
+      item_miss      = sum(resp_item_mem_acc == "Item Miss"),
+      item_fa        = sum(resp_item_mem_acc == "Item FA"),
+      item_cr        = sum(resp_item_mem_acc == "Item CR"),
+      n_item_target  = sum(goal %in% c("BGSM", "PLUP")),
+      n_item_foil    = sum(goal == "NOV"),
+      n_item_total   = item_hit + item_miss + item_fa + item_cr,
+      .groups        = "drop"
+    ) |> 
+    mutate(
+      item_hr  = item_hit / n_item_target,
+      item_far = item_fa  / n_item_foil,
+      item_dp  = fun.dprime(item_hit, item_fa, n_item_target, n_item_foil),
+    )
+}
+```
+
+## Helper function: Process source memory
+```{r}
+fun.summarize_src_block = function(df, group_vars) {
+  df |> 
+    filter(
+      !trial_burnin,
+      !resp_src_mem_acc %in% c("blink", "NO_RESPONSE")
+    ) |> 
+    group_by(across(all_of(group_vars))) |> 
+    summarise(
+      src_hit       = sum(resp_src_mem_acc %in% c("Size Hit", "Pleasant Hit")),
+      src_miss      = sum(resp_src_mem_acc %in% c("Size Miss", "Pleasant Miss")),
+      src_fa        = sum(resp_src_mem_acc %in% c("Size FA", "Pleasant FA")),
+      src_cr        = sum(resp_src_mem_acc == "Source CR"),
+      n_src_target  = sum(goal %in% c("BGSM", "PLUP")),
+      n_src_foil    = sum(goal == "NOV"),
+      n_src_total   = src_hit + src_miss + src_fa + src_cr,
+      .groups       = "drop"
+    ) |> 
+    mutate(
+      src_hr  = src_hit / n_src_target,
+      src_far = src_fa  / n_src_foil,
+      src_dp  = fun.dprime(src_hit, src_fa, n_src_target, n_src_foil),
+    )
+}
+```
+
+## Make Dataframes
+
+### Load in trial-level beh data
+```{r}
+df.trials = read_tsv(
+  here("data", paste0(path.bids_base, "trials_beh.tsv")),
+  show_col_types = FALSE
+)
+
+df.trials |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+### Item memory
+```{r}
+list.item_memory = list()
+```
+
+#### ...by subject
+```{r}
+df.item_dprime_by_subj = fun.summarize_item_block(
+  df = df.trials,
+  group_vars = "participant_id"
+)
+
+list.item_memory$by_subj = df.item_dprime_by_subj
+
+df.item_dprime_by_subj |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by subject $\times$ realtime pupil status
+```{r}
+df.item_dprime_by_subj_x_realtime_pupil = fun.summarize_item_block(
+  df = df.trials,
+  group_vars = c(
+    "participant_id", 
+    "realtime_window_status"
+  )
+)
+
+list.item_memory$by_subj_x_realtime_pupil = df.item_dprime_by_subj_x_realtime_pupil
+
+df.item_dprime_by_subj_x_realtime_pupil |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by subject $\times$ realtime trigger condition
+```{r}
+df.item_dprime_by_subj_x_realtime_trigger = fun.summarize_item_block(
+  df = df.trials,
+  group_vars = c(
+    "participant_id",
+    "trigger_status"
+  )
+)
+
+list.item_memory$by_subj_x_realtime_trigger = df.item_dprime_by_subj_x_realtime_trigger
+
+df.item_dprime_by_subj_x_realtime_trigger |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by subject $\times$ realtime pupil status $\times$ trigger condition
+```{r}
+df.item_dprime_by_subj_x_realtime_pupil_x_trigger = fun.summarize_item_block(
+  df.trials,
+  group_vars = c(
+    "participant_id",
+    "realtime_window_status",
+    "trigger_status"
+  )
+)
+
+list.item_memory$by_subj_x_realtime_pupil_x_trigger = df.item_dprime_by_subj_x_realtime_pupil_x_trigger
+
+df.item_dprime_by_subj_x_realtime_pupil_x_trigger |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by stimulus
+```{r}
+df.item_dprime_by_stim = fun.summarize_item_block(
+  df = df.trials,
+  group_vars = "stim"
+)
+
+list.item_memory$by_stim = df.item_dprime_by_stim
+
+df.item_dprime_by_stim |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by goal state
+```{r}
+df.item_dprime_by_goal = fun.summarize_item_block(
+  df = df.trials,
+  group_vars = "goal"
+)
+
+list.item_memory$by_goal = df.item_dprime_by_goal
+
+df.item_dprime_by_goal |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+### Source memory
+```{r}
+list.src_memory = list()
+```
+
+#### ...by subject
+```{r}
+df.src_dprime_by_subj = fun.summarize_src_block(
+  df = df.trials,
+  group_vars = "participant_id"
+)
+
+list.src_memory$by_subj = df.src_dprime_by_subj
+
+df.src_dprime_by_subj |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by subject $\times$ realtime pupil status
+```{r}
+df.src_dprime_by_subj_x_realtime_pupil = fun.summarize_src_block(
+  df = df.trials,
+  group_vars = c(
+    "participant_id", 
+    "realtime_window_status"
+  )
+)
+
+list.src_memory$by_subj_x_realtime_pupil = df.src_dprime_by_subj_x_realtime_pupil
+
+df.src_dprime_by_subj_x_realtime_pupil |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by subject $\times$ realtime trigger condition
+```{r}
+df.src_dprime_by_subj_x_realtime_trigger = fun.summarize_src_block(
+  df = df.trials,
+  group_vars = c(
+    "participant_id",
+    "trigger_status"
+  )
+)
+
+list.src_memory$by_subj_x_realtime_trigger = df.src_dprime_by_subj_x_realtime_trigger
+
+df.src_dprime_by_subj_x_realtime_trigger |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by subject $\times$ realtime pupil status $\times$ trigger condition
+```{r}
+df.src_dprime_by_subj_x_realtime_pupil_x_trigger = fun.summarize_src_block(
+  df.trials,
+  group_vars = c(
+    "participant_id",
+    "realtime_window_status",
+    "trigger_status"
+  )
+)
+
+list.src_memory$by_subj_x_realtime_pupil_x_trigger = df.src_dprime_by_subj_x_realtime_pupil_x_trigger
+
+df.src_dprime_by_subj_x_realtime_pupil_x_trigger |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by stimulus
+```{r}
+df.src_dprime_by_stim = fun.summarize_src_block(
+  df = df.trials,
+  group_vars = "stim"
+)
+
+list.src_memory$by_stim = df.src_dprime_by_stim
+
+df.src_dprime_by_stim |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+#### ...by goal state
+```{r}
+df.src_dprime_by_goal = fun.summarize_src_block(
+  df = df.trials,
+  group_vars = "goal"
+)
+
+list.src_memory$by_goal = df.src_dprime_by_goal
+
+df.src_dprime_by_goal |> 
+  head(10) |> 
+  kable(digits = 2)
+```
+
+## Outliers
+
+### Identify problematic subjects
+
+#### Item memory
+
+Here, we identify any subjects with item memory *d'* less than or equal to 0 and/or any subjects who have very few or very many lapsing trials (i.e., more than 2 SDs from the mean proportion of lapsing trials relative to all subjects).
+
+```{r}
+lapse_item_counts = list.item_memory$by_subj_x_realtime_trigger |>
+  mutate(
+    trigger_status = factor(
+      trigger_status, 
+      levels = c(
+        "no_lapse_no_trigger",
+        "lapse_no_trigger",
+        "lapse_trigger"
+      )
+    )
+  ) |> 
+  group_by(participant_id) |>
+  summarise(
+    lapse_sum = sum(n_item_total[trigger_status %in% c("lapse_no_trigger", "lapse_trigger")]),
+    total_sum = sum(n_item_total),
+    lapse_prop = lapse_sum / total_sum,
+    any_dprime_zero_or_neg = any(item_dp <= 0)
+  ) |> 
+  mutate(
+    z_score = scale(lapse_prop)[,1],
+    is_extreme = abs(z_score) > 2 | any_dprime_zero_or_neg,  # more than 2 SD from mean
+  )
+
+lapse_item_counts |> 
+  filter(is_extreme) |> 
+  kable(digits = 3)
+```
+
+#### Source Memory
+
+Again, we identify any subjects with source memory *d'* less than or equal to 0 and/or any subjects who have very few or very many lapsing trials (i.e., more than 2 SDs from the mean proportion of lapsing trials relative to all subjects).
+
+-   note, the proportion of trials calculation is the same as above (for the item memory *d'* calculations, since the trial counts don't change based on their item vs. source memory)
+
+```{r}
+lapse_src_counts = list.src_memory$by_subj_x_realtime_trigger |>
+  mutate(
+    trigger_status = factor(
+      trigger_status, 
+      levels = c(
+        "no_lapse_no_trigger",
+        "lapse_no_trigger",
+        "lapse_trigger"
+      )
+    )
+  ) |>
+  group_by(participant_id) |>
+  summarise(
+    lapse_sum = sum(n_src_total[trigger_status %in% c("lapse_no_trigger", "lapse_trigger")]),
+    total_sum = sum(n_src_total),
+    lapse_prop = lapse_sum / total_sum,
+    any_dprime_zero_or_neg = any(src_dp <= 0)
+  ) |> 
+  mutate(
+    z_score = scale(lapse_prop)[,1],
+    is_extreme = abs(z_score) > 2 | any_dprime_zero_or_neg,  # more than 2 SD from mean
+  )
+
+lapse_src_counts |>
+  filter(is_extreme) |> 
+  kable(digits = 3)
+```
+
+### Failure to Comply with Task Instructions
+
+-   according to experimenter logs, sub-27 misunderstood the instructions and intentionally withheld responses on all `lapse_trigger` trials, thus, they have no usable data here
+
+```{r}
+missing_conds = "sub-27"
+```
+
+-   other subjects to exclude based on experimenter logs
+
+```{r}
+bad_subjs = c("sub-78", "sub-80")
+```
+
+### Collapse Subject IDs
+
+```{r}
+ids_to_exclude = lapse_src_counts |> 
+  filter(is_extreme) |> 
+  pull(participant_id) |> 
+  c(lapse_item_counts |> filter(is_extreme) |> pull(participant_id)) |>
+  c(missing_conds, bad_subjs) |> 
+  unique() |> 
+  sort()
+
+print(ids_to_exclude)
+
+length(ids_to_exclude)
+```
+
+### Broken Down by Exclusion Criteria
+
+```{r}
+message("item memory d' (any less than or equal to 0):")
+lapse_item_counts |>
+  filter(is_extreme, any_dprime_zero_or_neg) |> 
+  kable(digits = 3)
+
+message("item memory d' (any more than 2 SDs from mean proportion of lapse trials:")
+lapse_item_counts |>
+  filter(is_extreme, !any_dprime_zero_or_neg) |> 
+  kable(digits = 3)
+
+message("source memory d' (any less than or equal to 0):")
+lapse_src_counts |>
+  filter(is_extreme, any_dprime_zero_or_neg) |> 
+  kable(digits = 3)
+
+message("source memory d' (any more than 2 SDs from mean proportion of lapse trials:")
+lapse_src_counts |>
+  filter(is_extreme, !any_dprime_zero_or_neg) |> 
+  kable(digits = 3)
+```
+
+## Write Data
+
+```{r}
+fun.write_block(list.item_memory, "item_dprimes")
+fun.write_block(list.src_memory, "source_dprimes")
+fun.write_block(ids_to_exclude, "ids_to_exclude", skip_list = TRUE)
+```
