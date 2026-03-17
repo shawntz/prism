@@ -1,0 +1,25 @@
+{
+  "name" : "ps5eclrt",
+  "entries" : {
+    "1356:3302:1~Button 4" : {
+      "type" : "key press",
+      "key" : 31
+    },
+    "1356:3302:1~Button 3" : {
+      "type" : "key press",
+      "key" : 34
+    },
+    "1356:3302:1~Button 2" : {
+      "type" : "key press",
+      "key" : 35
+    },
+    "1356:3302:1~Button 14" : {
+      "type" : "key press",
+      "key" : 49
+    },
+    "1356:3302:1~Button 1" : {
+      "type" : "key press",
+      "key" : 32
+    }
+  }
+}
