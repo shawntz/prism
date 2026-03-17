@@ -1,0 +1,232 @@
+# Make figure 2
+
+```{r}
+fig.item_wide = df.item_dp_cond |> 
+  select(participant_id, trigger_status, item_dp) |> 
+  pivot_wider(id_cols = participant_id,
+              names_from = trigger_status,
+              values_from = item_dp,
+              names_glue  = "{trigger_status}_{.value}")
+  
+fig.src_wide = df.source_dp_cond |> 
+  select(participant_id, trigger_status, src_dp) |> 
+  pivot_wider(id_cols = participant_id,
+              names_from = trigger_status,
+              values_from = src_dp,
+              names_glue  = "{trigger_status}_{.value}")
+```
+
+```{r}
+condition_colors <- c(
+  "No Lapse" = "steelblue",
+  "Lapse"    = "firebrick",
+  "Trigger"       = "darkmagenta"
+)
+
+# --- Spaghetti + jitter plot ---
+plot_spaghetti <- function(data, mem_type = c("item", "src")) {
+  mem_type <- match.arg(mem_type)
+  dp_suffix <- paste0("_", mem_type, "_dp")
+  title <- if (mem_type == "item") "Item memory" else "Source memory"
+
+  col_nolapse <- paste0("no_lapse_no_trigger", dp_suffix)
+  col_lnt     <- paste0("lapse_no_trigger", dp_suffix)
+  col_lt      <- paste0("lapse_trigger", dp_suffix)
+
+  long <- data %>%
+    select(participant_id, all_of(c(col_nolapse, col_lnt, col_lt))) %>%
+    pivot_longer(-participant_id, names_to = "condition", values_to = "dprime") %>%
+    mutate(
+      trigger_condition = case_when(
+        condition == col_lnt     ~ "Lapse",
+        condition == col_lt      ~ "Trigger",
+        condition == col_nolapse ~ "No Lapse"
+      ),
+      trigger_condition = factor(trigger_condition, levels = c(
+        "No Lapse", "Lapse", "Trigger"
+      ))
+    )
+
+  # Cousineau-Morey within-subjects SEM
+  k <- n_distinct(long$trigger_condition)
+  normed <- long %>%
+    group_by(participant_id) %>%
+    mutate(dprime_norm = dprime - mean(dprime, na.rm = TRUE)) %>%
+    ungroup() %>%
+    mutate(dprime_norm = dprime_norm + mean(long$dprime, na.rm = TRUE))
+
+  ws_sem <- normed %>%
+    group_by(trigger_condition) %>%
+    summarise(
+      sem = sd(dprime_norm, na.rm = TRUE) / sqrt(sum(!is.na(dprime_norm))) * sqrt(k / (k - 1)),
+      .groups = "drop"
+    )
+
+  means_df <- long %>%
+    group_by(trigger_condition) %>%
+    summarise(mean_dp = mean(dprime, na.rm = TRUE), .groups = "drop") %>%
+    left_join(ws_sem, by = "trigger_condition")
+
+  ggplot(long, aes(x = trigger_condition, y = dprime)) +
+    geom_pointrange(
+      data = means_df,
+      aes(x = trigger_condition, y = mean_dp,
+          ymin = mean_dp - sem, ymax = mean_dp + sem,
+          color = trigger_condition),
+      size = 0.8, linewidth = 1
+    ) +
+    scale_color_manual(values = condition_colors) +
+    scale_fill_manual(values = condition_colors) +
+    labs(title = title, x = " ", y = "d'") +
+    theme(
+      axis.title.y = element_text(face = "italic"),
+      legend.position = "none"
+    )
+}
+
+# --- Half-violin polygon helper ---
+make_violin_poly <- function(vals, x_pos, max_width = 0.5, side = "right") {
+  kde <- density(vals, n = 300)
+  d <- kde$y / max(kde$y) * max_width
+  if (side == "left") d <- -d
+
+  above <- which(kde$x >= 0)
+  below <- which(kde$x <= 0)
+
+  bind_rows(
+    tibble(
+      x = c(x_pos, x_pos + d[above], x_pos),
+      y = c(kde$x[min(above)], kde$x[above], kde$x[max(above)]),
+      fill = "pos"
+    ),
+    tibble(
+      x = c(x_pos, x_pos + d[below], x_pos),
+      y = c(kde$x[min(below)], kde$x[below], kde$x[max(below)]),
+      fill = "neg"
+    )
+  )
+}
+
+# --- Raincloud difference plot ---
+plot_raincloud_diff <- function(data, mem_type = c("item", "src")) {
+  mem_type <- match.arg(mem_type)
+  dp_suffix <- paste0("_", mem_type, "_dp")
+  title <- if (mem_type == "item") "Item memory" else "Source memory"
+
+  col_nolapse <- paste0("no_lapse_no_trigger", dp_suffix)
+  col_lnt     <- paste0("lapse_no_trigger", dp_suffix)
+  col_lt      <- paste0("lapse_trigger", dp_suffix)
+
+  diff_long <- data %>%
+    transmute(
+      participant_id,
+      lnt_nlnt = .data[[col_lnt]] - .data[[col_nolapse]],
+      lt_lnt   = .data[[col_lt]]  - .data[[col_lnt]]
+    ) %>%
+    pivot_longer(-participant_id, names_to = "comparison", values_to = "diff") %>%
+    group_by(participant_id) %>%
+    mutate(jitter_offset = runif(1, 0.05, 0.25)) %>%
+    ungroup() %>%
+    mutate(
+      x_pos      = ifelse(comparison == "lnt_nlnt", 0, 1.5),
+      sign_group = ifelse(diff >= 0, "pos", "neg"),
+      x_jitter   = x_pos + ifelse(comparison == "lnt_nlnt", jitter_offset, -jitter_offset)
+    )
+
+  violin_polys <- diff_long %>%
+    distinct(comparison, x_pos) %>%
+    mutate(side = ifelse(comparison == "lnt_nlnt", "left", "right")) %>%
+    rowwise() %>%
+    mutate(poly = list(
+      make_violin_poly(diff_long$diff[diff_long$comparison == comparison], x_pos, side = side)
+    )) %>%
+    unnest(poly)
+
+  summary_df <- diff_long %>%
+    group_by(comparison, x_pos) %>%
+    summarise(
+      mean_val = mean(diff, na.rm = TRUE),
+      sem = sd(diff, na.rm = TRUE) / sqrt(sum(!is.na(diff))),
+      .groups = "drop"
+    )
+
+  x_labels <- c(
+    "0"   = "Lapse – No Lapse",
+    "1.5" = "Trigger – Lapse"
+  )
+
+  ggplot() +
+    geom_hline(yintercept = 0, linetype = "dashed", linewidth = 1) +
+    geom_polygon(
+      data = violin_polys,
+      aes(x = x, y = y, group = interaction(comparison, fill), fill = fill),
+      alpha = 0.9, color = NA
+    ) +
+    geom_line(
+      data = diff_long,
+      aes(x = x_jitter, y = diff, group = participant_id),
+      color = "gray", alpha = 0.33, linewidth = 0.5
+    ) +
+    geom_point(
+      data = diff_long,
+      aes(x = x_jitter, y = diff, fill = sign_group),
+      shape = 21, size = 2.5, alpha = 0.8,
+      color = "white", stroke = 0.5
+    ) +
+    geom_segment(
+      data = summary_df,
+      aes(x = x_pos, xend = x_pos,
+          y = mean_val - sem, yend = mean_val + sem),
+      linewidth = 1.5
+    ) +
+    geom_segment(
+      data = summary_df,
+      aes(x = x_pos - 0.04, xend = x_pos + 0.04,
+          y = mean_val - sem, yend = mean_val - sem),
+      linewidth = 1.5
+    ) +
+    geom_segment(
+      data = summary_df,
+      aes(x = x_pos - 0.04, xend = x_pos + 0.04,
+          y = mean_val + sem, yend = mean_val + sem),
+      linewidth = 1.5
+    ) +
+    scale_fill_manual(
+      values = c("pos" = "#4B999E", "neg" = "#D7753E"),
+      labels = c("pos" = "Δ ≥ 0", "neg" = "Δ < 0")
+    ) +
+    scale_x_continuous(
+      breaks = c(0, 1.5),
+      labels = x_labels[c("0", "1.5")],
+      limits = c(-0.8, 2.3)
+    ) +
+    scale_y_continuous(breaks = seq(-2, 2, 1)) +
+    labs(title = title, x = " ", y = "Δd'", fill = NULL) +
+    theme(
+      axis.title.y = element_text(face = "italic"),
+      legend.position = c(0.85, 0.1),
+      legend.background = element_blank(),
+      legend.text = element_text(size = 11)
+    )
+}
+```
+
+```{r, fig.width=18, fig.height=11, fig.dpi=300}
+p1 <- plot_spaghetti(fig.item_wide, "item")
+p2 <- plot_raincloud_diff(fig.item_wide, "item")
+p3 <- plot_spaghetti(fig.src_wide, "src")
+p4 <- plot_raincloud_diff(fig.src_wide, "src")
+
+row1 <- p1 + p2 + plot.item_memory_contrasts + plot_layout(widths = c(1, 2, 1))
+row2 <- p3 + p4 + plot.source_memory_contrasts + plot_layout(widths = c(1, 2, 1))
+
+font_add("Arial", "/System/Library/Fonts/Helvetica.ttc")
+
+row1 / row2 +
+  plot_annotation(tag_levels = "a") &
+  theme(plot.tag = element_text(size = 32, face = "bold", family = "Arial"))
+
+ggsave(here("plots", "fig2.svg"),
+       width = 18, height = 11, dpi = 300, bg = "white")
+```
+
