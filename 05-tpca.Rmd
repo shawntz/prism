@@ -186,16 +186,17 @@ run_tPCA <- function(input.data, time_cols, ncomp, sample) {
   pca_input <- subj.data |>
     select(all_of(time_cols))
 
-  data.pca <- prcomp(pca_input, center = TRUE, scale. = TRUE)
+  # data.pca <- prcomp(pca_input, center = TRUE, scale. = TRUE)
+  data.pca <- prcomp(pca_input, center = FALSE, scale. = FALSE)
 
   if (!sample) {
     plot(data.pca)  # scree plot
   }
 
   # change the sign of PC1, PC2 columns to flip the sign of the loadings
-  rot <- data.pca$rotation
-  rot[, c(1,2,3,4)] <- rot[, c(1,2,3,4)] * -1
-  data.pca$rotation <- rot
+  # rot <- data.pca$rotation
+  # rot[, c(1,2,3,4)] <- rot[, c(1,2,3,4)] * -1
+  # data.pca$rotation <- rot
 
   raw.loadings     <- data.pca$rotation[,1:ncomp] %*% diag(data.pca$sdev, ncomp, ncomp)
   rotated.loadings <- varimax(raw.loadings)$loadings
@@ -421,16 +422,16 @@ fit.brm_comp_x_mem |>
 
 # Effect of item_mem (Hit vs Miss) for each component
 # PC1 — directly the main effect
-hypothesis(fit.brm_comp_x_mem, "item_memMiss > 0")
+hypothesis(fit.brm_comp_x_mem, "item_memMiss < 0")
 
 # PC2 — main effect + interaction
-hypothesis(fit.brm_comp_x_mem, "item_memMiss + item_memMiss:componentPC2 > 0")
+hypothesis(fit.brm_comp_x_mem, "item_memMiss + item_memMiss:componentPC2 < 0")
 
 # PC3
-hypothesis(fit.brm_comp_x_mem, "item_memMiss + item_memMiss:componentPC3 > 0")
+hypothesis(fit.brm_comp_x_mem, "item_memMiss + item_memMiss:componentPC3 < 0")
 
 # PC4
-hypothesis(fit.brm_comp_x_mem, "item_memMiss + item_memMiss:componentPC4 > 0")
+hypothesis(fit.brm_comp_x_mem, "item_memMiss + item_memMiss:componentPC4 < 0")
 
 scores %>%
   filter(item_mem %in% c("Hit", "Miss")) %>%
@@ -490,7 +491,7 @@ df_fixposttrig_all %>%
     fun = mean,
     geom = "bar",
     position = position_dodge(0.8),
-    width = 0.7,
+    width = 0.2,
     alpha = 0.7
   ) +
   stat_summary(
@@ -501,7 +502,8 @@ df_fixposttrig_all %>%
     linewidth = 0.7
   ) +
   scale_fill_manual(values = c("Hit" = "#4C72B0", "Miss" = "#DD8452")) +
-  scale_color_manual(values = c("Hit" = "#4C72B0", "Miss" = "#DD8452"))
+  scale_color_manual(values = c("Hit" = "#4C72B0", "Miss" = "#DD8452")) +
+  coord_flip
 ```
 
 ```{r}
