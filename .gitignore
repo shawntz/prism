@@ -2,3 +2,4 @@
 /plots/.jupyter
 /plots/.virtual_documents
 /plots/.ipynb_checkpoints
+*.parquet
