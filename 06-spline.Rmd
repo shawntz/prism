@@ -27,8 +27,13 @@ message(paste("Found", length(parquet_files), "parquet files"))
 
 ## Load trial-level behavioral data
 ```{r}
-df.trials <- df.trials |> 
-  filter(!participant_id %in% vec.subjects_to_exclude) |> 
+# Save stimulus-to-stim_index mapping before filtering (needed for chronological ordering)
+df.trial_order <- df.trials |>
+  select(participant_id, run, stim, stim_index) |>
+  distinct()
+
+df.trials <- df.trials |>
+  filter(!participant_id %in% vec.subjects_to_exclude) |>
   filter(!resp_item_mem_acc %in% c("blink", "NO_RESPONSE"))
 
 message(paste("Loaded", nrow(df.trials), "trials"))
@@ -36,22 +41,57 @@ message(paste("Loaded", nrow(df.trials), "trials"))
 
 ## Spline detrending function
 ```{r}
-detrend_with_spline = function(df, spline_df = SPLINE_DF) {
+detrend_with_spline = function(df, spline_df = SPLINE_DF, trial_order = df.trial_order) {
   df = as.data.frame(df)
   df = df[df$epoch %in% EPOCH_ORDER, ]
   df$epoch_rank = match(df$epoch, EPOCH_ORDER)
-  
-  df |> 
-    group_by(subject_id, run) |> 
-    arrange(item, epoch_rank, timebin, .by_group = TRUE) |> 
+
+  # Get chronological stim_index from behavioral data
+  df$stim_index <- NULL
+  if (is.numeric(df$subject_id)) {
+    df$subject_id <- paste0("sub-", str_pad(df$subject_id, width = 2, pad = "0"))
+  }
+  df <- df |>
+    left_join(
+      trial_order |>
+        select(participant_id, run, stim, stim_index) |>
+        rename(item = stim) |>
+        distinct(),
+      by = c("subject_id" = "participant_id", "run", "item")
+    )
+
+  # Arrange chronologically
+  df <- df |>
+    arrange(subject_id, run, stim_index, epoch_rank, timebin)
+
+  # Compute within-trial sample position
+  df <- df |>
+    group_by(subject_id, run, stim_index) |>
+    mutate(within_trial_sample = row_number() - 1) |>
+    ungroup()
+
+  # Median trial duration (in samples) per run — used to size gaps for missing trials
+  trial_durations <- df |>
+    count(subject_id, run, stim_index) |>
+    group_by(subject_id, run) |>
+    summarise(median_trial_samples = median(n), .groups = "drop")
+
+  # Compute time_sec: stim_index sets the trial offset, gaps preserved for missing indices
+  df <- df |>
+    left_join(trial_durations, by = c("subject_id", "run")) |>
+    mutate(time_sec = stim_index * median_trial_samples / 1000 + within_trial_sample / 1000)
+
+  # Fit spline and detrend
+  df |>
+    group_by(subject_id, run) |>
     mutate(
-      time_sec = (row_number() - 1) / 1000,
       spline_trend = predict(
-        lm(pupil ~ splines::ns(time_sec, df = spline_df))
+        lm(pupil ~ splines::ns(time_sec, df = spline_df), na.action = na.exclude)
       ),
       pupil_detrended = pupil - spline_trend
-    ) |> 
-    ungroup() |> 
+    ) |>
+    ungroup() |>
+    select(-within_trial_sample, -median_trial_samples) |>
     mutate(participant_id = paste0("sub-", str_pad(subject_id, width = 2, pad = "0"))) 
 }
 ```
@@ -62,11 +102,14 @@ process_subject_spline = function(parquet_path, subjects_to_exclude, spline_df =
                                   include_burnin_in_baseline = INCLUDE_BURNIN_IN_BASELINE, classify_burnin_trials = CLASSIFY_BURNIN_TRIALS) {
   df.pupil = read_parquet(parquet_path)
   subj_id = unique(df.pupil$subject_id)[1]
-  
+
   if (subj_id %in% subjects_to_exclude) {
     return(NULL)
   }
-  
+
+  # Exclude sub-71 run 3 (removed from df.trials due to data issue)
+  df.pupil <- df.pupil |> filter(!(subject_id == subj_id & subj_id %in% c("sub-71", 71) & run == 3))
+
   # step 1: apply spline detrending
   df.pupil = detrend_with_spline(df.pupil, spline_df = spline_df)
   
@@ -83,9 +126,10 @@ process_subject_spline = function(parquet_path, subjects_to_exclude, spline_df =
     )
   
   # step 3: get trial-level metadata
-  df.trial_meta = df.pupil |> 
-    group_by(subject_id, run, trial, trial_burnin) |> 
+  df.trial_meta = df.pupil |>
+    group_by(subject_id, run, trial, trial_burnin) |>
     summarize(
+      stim_index = first(stim_index),
       trigger_lower_threshold = first(trigger_lower_threshold),
       trigger_upper_threshold = first(trigger_upper_threshold),
       trigger_baseline_mean = first(trigger_baseline_mean),
@@ -184,7 +228,7 @@ process_subject_spline = function(parquet_path, subjects_to_exclude, spline_df =
 
 ## test out on single subject
 ```{r fig.width=10, fig.height=15}
-example_file = pupil_files[1]
+example_file = parquet_files[1]
 df.example = read_parquet(example_file)
 df.example_detrended = detrend_with_spline(df.example, spline_df = SPLINE_DF)
 
@@ -301,6 +345,30 @@ flow_table
 ```
 
 ```{r}
+# Reclassification flow table split by constriction / dilation
+message("=== Trial Flow by Constriction / Dilation ===\n")
+
+flow_by_direction <- df.trials_reclassified |>
+  filter(!trial_burnin, !is.na(trigger_status_new),
+         realtime_window_status %in% c("constriction", "dilation")) |>
+  count(trigger_status_original_4cat, trigger_status_new, realtime_window_status) |>
+  pivot_wider(
+    names_from = realtime_window_status,
+    values_from = n,
+    values_fill = 0
+  ) |>
+  mutate(cell_label = paste0(constriction, " / ", dilation)) |>
+  select(trigger_status_original_4cat, trigger_status_new, cell_label) |>
+  pivot_wider(
+    names_from = trigger_status_new,
+    values_from = cell_label,
+    values_fill = "0 / 0"
+  )
+
+flow_by_direction
+```
+
+```{r}
 df.trials_reclassified |>
   filter(!trial_burnin, !is.na(trigger_status_original_4cat)) |>
   count(trigger_status_original_4cat) |>
@@ -345,6 +413,7 @@ spline_trends <- map_dfr(seq_along(parquet_files), function(i) {
 
   read_parquet(f) |>
     as.data.frame() |>
+    filter(!(subject_id %in% c("sub-71", 71) & run == 3)) |>
     detrend_with_spline(spline_df = SPLINE_DF) |>
     select(subject_id, run, time_sec, spline_trend) |>
     group_by(subject_id, run) |>
@@ -658,6 +727,104 @@ fit.brm_true_lapse_item |> summary()
 hypothesis(fit.brm_true_lapse_item, "conditionLapseTrigger > conditionLapse")
 
 fit.brm_true_lapse_item |> emmeans(pairwise ~ condition)
+```
+
+## Asymmetric trigger effect: Constriction vs. Dilation
+
+```{r}
+# Split true lapses by pupil direction (constriction = low arousal, dilation = high arousal)
+df.true_lapses_by_direction <- df.true_lapses |>
+  filter(realtime_window_status %in% c("constriction", "dilation"))
+
+message(glue("True lapses with direction: {nrow(df.true_lapses_by_direction)} / {nrow(df.true_lapses)} total"))
+df.true_lapses_by_direction |> count(trigger_status_new, realtime_window_status)
+```
+
+```{r}
+# Item d' per subject × trigger condition × pupil direction
+df.direction_item_dp <- df.true_lapses_by_direction |>
+  group_by(participant_id, trigger_status_new, realtime_window_status) |>
+  summarise(
+    item_hit = sum(resp_item_mem_acc == "Item Hit"),
+    item_fa = sum(resp_item_mem_acc == "Item FA"),
+    n_item_target = sum(goal %in% c("BGSM", "PLUP")),
+    n_item_foil = sum(goal == "NOV"),
+    n_trials = n(),
+    .groups = "drop"
+  ) |>
+  mutate(
+    item_dp = fun.dprime(item_hit, item_fa, n_item_target, n_item_foil),
+    trigger = factor(
+      trigger_status_new,
+      levels = c("lapse_notrigger", "lapse_trigger"),
+      labels = c("NoTrigger", "Trigger")
+    ),
+    direction = factor(realtime_window_status, levels = c("constriction", "dilation"))
+  )
+
+message(glue("Direction × Trigger: {nrow(df.direction_item_dp)} rows from {n_distinct(df.direction_item_dp$participant_id)} subjects"))
+df.direction_item_dp |> count(trigger, direction)
+```
+
+```{r warning=FALSE}
+# 2×2 model: trigger × pupil direction
+fit.brm_direction_item = brm(
+  item_dp ~ 0 + trigger:direction,
+  data    = df.direction_item_dp,
+  family  = gaussian(),
+  chains  = 4,
+  cores   = 4,
+  seed    = 512,
+  iter    = 4000,
+  warmup  = 1000,
+  file    = "models/brm_direction_trigger_item_dprime"
+)
+
+fit.brm_direction_item |> summary()
+
+# Trigger effect within constriction trials
+hypothesis(fit.brm_direction_item,
+  "triggerTrigger:directionconstriction > triggerNoTrigger:directionconstriction")
+
+# Trigger effect within dilation trials
+hypothesis(fit.brm_direction_item,
+  "triggerTrigger:directiondilation > triggerNoTrigger:directiondilation")
+
+# Asymmetry: trigger effect on constriction > trigger effect on dilation
+hypothesis(fit.brm_direction_item,
+  "(triggerTrigger:directionconstriction - triggerNoTrigger:directionconstriction) > (triggerTrigger:directiondilation - triggerNoTrigger:directiondilation)")
+
+fit.brm_direction_item |> emmeans(pairwise ~ trigger | direction)
+```
+
+```{r fig.width=8, fig.height=5, fig.dpi=300}
+# Posterior contrast: trigger effect per direction
+direction_draws <- as_draws_df(fit.brm_direction_item) |>
+  transmute(
+    Constriction = `b_triggerTrigger:directionconstriction` -
+                   `b_triggerNoTrigger:directionconstriction`,
+    Dilation     = `b_triggerTrigger:directiondilation` -
+                   `b_triggerNoTrigger:directiondilation`
+  ) |>
+  pivot_longer(everything(), names_to = "direction", values_to = "trigger_effect") |>
+  mutate(direction = factor(direction, levels = c("Constriction", "Dilation")))
+
+plot.direction_trigger <- ggplot(direction_draws,
+    aes(x = trigger_effect, y = direction, fill = direction)) +
+  stat_halfeye(
+    point_interval = median_hdi, .width = c(0.66, 0.9),
+    slab_alpha = 0.8, normalize = "panels", point_size = 4
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.66) +
+  scale_fill_manual(values = c("Constriction" = "#4575B4", "Dilation" = "#D73027")) +
+  labs(
+    x = "Posterior trigger effect (Trigger \u2013 NoTrigger, item d\u2032)",
+    y = NULL,
+    title = "Trigger rescue by pupil direction"
+  ) +
+  theme(legend.position = "none")
+
+plot.direction_trigger
 ```
 
 ## Hidden trigger effect
@@ -1076,5 +1243,156 @@ plot.hidden_trigger_contrasts <- ggplot(hidden_draws, aes(x = contrast, y = outc
 
 ggsave(here("plots", "fig4.svg"),
        width = 14, height = 12, dpi = 300, bg = "white")
+```
+
+## Per-subject spline diagnostic PDF
+
+```{r}
+# Build plot data directly from df.comparison
+# Shape = original classification, Color = new spline classification
+df.plot_data <- df.comparison |>
+  mutate(
+    # Use window_two assay if it exists, else window_one
+    assay_value = coalesce(trigger_assay_two_mean, trigger_assay_one_mean),
+    # Per-trial spline trend estimate (for raw-space trend line)
+    spline_trend_est = realtime_pupil_raw - realtime_pupil_detrended,
+    # Original classification (determines shape)
+    orig_class = case_when(
+      trial_burnin ~ "burnin",
+      trigger_status_original_4cat == "nolapse_notrigger" ~ "nolapse_notrigger",
+      trigger_status_original_4cat == "lapse_notrigger"   ~ "lapse_notrigger",
+      trigger_status_original_4cat == "lapse_trigger"     ~ "lapse_trigger",
+      TRUE ~ NA_character_
+    ),
+    # New spline classification (determines color)
+    new_class = case_when(
+      trial_burnin ~ "burnin",
+      is.na(trigger_status_new) ~ NA_character_,
+      grepl("^nolapse", trigger_status_new) ~ "nolapse",
+      grepl("^lapse", trigger_status_new)   ~ "lapse",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  filter(!is.na(orig_class), !is.na(new_class))
+
+# Shape: original classification
+orig_shapes <- c(
+  "nolapse_notrigger" = 15,  # filled square
+  "lapse_notrigger"   = 17,  # filled triangle
+  "lapse_trigger"     = 16,  # filled circle
+  "burnin"            = 1    # open circle
+)
+
+# Color: new spline classification
+new_colors <- c(
+  "nolapse" = "#2CA02C",  # green
+  "lapse"   = "#D62729",  # red
+  "burnin"  = "gray75"
+)
+
+df.plot_data <- df.plot_data |>
+  mutate(
+    orig_class = factor(orig_class, levels = names(orig_shapes)),
+    new_class  = factor(new_class, levels = names(new_colors))
+  )
+
+message(glue("Plot data: {nrow(df.plot_data)} trials from {n_distinct(df.plot_data$subject_id)} subjects"))
+df.plot_data |> count(orig_class, new_class)
+```
+
+```{r}
+pdf(here("plots", "subject_spline_diagnostics.pdf"), width = 16, height = 16)
+
+for (subj in sort(unique(df.plot_data$subject_id))) {
+  df.subj <- df.plot_data |> filter(subject_id == subj)
+  df.subj_nonburnin <- df.subj |> filter(!trial_burnin)
+
+  # --- Top panel: raw pupil space ---
+  p_raw <- ggplot() +
+    # Per-trial spline trend estimate
+    geom_line(data = df.subj,
+              aes(x = stim_index, y = spline_trend_est),
+              color = "red", linewidth = 0.8) +
+    # Original thresholds (non-burn-in only — constant after burn-in)
+    geom_line(data = df.subj_nonburnin,
+              aes(x = stim_index, y = trigger_baseline_mean),
+              color = "black", linewidth = 0.5) +
+    geom_line(data = df.subj_nonburnin,
+              aes(x = stim_index, y = trigger_upper_threshold),
+              color = "black", linewidth = 0.4, linetype = "dashed") +
+    geom_line(data = df.subj_nonburnin,
+              aes(x = stim_index, y = trigger_lower_threshold),
+              color = "black", linewidth = 0.4, linetype = "dashed") +
+    # Trial assay points
+    geom_point(data = df.subj,
+               aes(x = stim_index, y = assay_value,
+                   color = new_class, shape = orig_class),
+               size = 2.5, alpha = 0.85) +
+    scale_color_manual(values = new_colors, drop = FALSE) +
+    scale_shape_manual(values = orig_shapes, drop = FALSE) +
+    facet_wrap(~ run, ncol = 1,
+               labeller = labeller(run = function(x) paste("Run", x))) +
+    labs(
+      title = subj,
+      subtitle = "Raw space: red = spline trend, black = original threshold (mean \u00B1 1 SD)",
+      x = NULL, y = "Pupil size (raw)",
+      shape = "Original", color = "Spline"
+    ) +
+    theme_classic(base_size = 11) +
+    theme(legend.position = "none",
+          strip.text = element_text(size = 11, face = "bold"))
+
+  # --- Bottom panel: detrended space ---
+  df.run_thresholds <- df.subj |>
+    group_by(run) |>
+    summarise(
+      global_upper = first(global_upper_threshold),
+      global_lower = first(global_lower_threshold),
+      global_mean  = first(global_realtime_mean),
+      .groups = "drop"
+    )
+
+  p_detrended <- ggplot() +
+    # Flat spline thresholds (constant per run)
+    geom_hline(data = df.run_thresholds,
+               aes(yintercept = global_mean),
+               color = "steelblue", linewidth = 0.5) +
+    geom_hline(data = df.run_thresholds,
+               aes(yintercept = global_upper),
+               color = "steelblue", linewidth = 0.4, linetype = "dashed") +
+    geom_hline(data = df.run_thresholds,
+               aes(yintercept = global_lower),
+               color = "steelblue", linewidth = 0.4, linetype = "dashed") +
+    # Detrended trial points (the actual values used for classification)
+    geom_point(data = df.subj,
+               aes(x = stim_index, y = realtime_pupil_detrended,
+                   color = new_class, shape = orig_class),
+               size = 2.5, alpha = 0.85) +
+    scale_color_manual(values = new_colors, drop = FALSE) +
+    scale_shape_manual(values = orig_shapes, drop = FALSE) +
+    facet_wrap(~ run, ncol = 1,
+               labeller = labeller(run = function(x) paste("Run", x))) +
+    labs(
+      subtitle = "Detrended space: blue = global spline threshold (mean \u00B1 1 SD)",
+      x = "Stimulus index", y = "Pupil size (detrended)",
+      shape = "Original", color = "Spline"
+    ) +
+    theme_classic(base_size = 11) +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(size = 10),
+      legend.text = element_text(size = 9),
+      strip.text = element_text(size = 11, face = "bold")
+    ) +
+    guides(
+      shape = guide_legend(order = 1, override.aes = list(size = 3)),
+      color = guide_legend(order = 2, override.aes = list(size = 3))
+    )
+
+  print(p_raw / p_detrended + plot_layout(heights = c(1, 1)))
+}
+
+dev.off()
+message("Saved: plots/subject_spline_diagnostics.pdf")
 ```
 
