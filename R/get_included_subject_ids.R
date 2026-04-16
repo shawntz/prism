@@ -1,4 +1,4 @@
-get_good_subjects = function(file) {
+get_included_subject_ids = function(file) {
   read_csv(file) %>% 
     filter(exclude == "no") %>% 
     pull(subject_id)
