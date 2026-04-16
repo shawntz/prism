@@ -212,14 +212,11 @@ detrend_runs <- function(subject_ids) {
       ) +
       ggtitle(paste(sub, "run", run, "- Detrended"))
 
-    ts_df <- ts %>%
-      mutate(subject = sub, run = run)
-
     trial_df <- df %>%
       mutate(subject = sub, run = run) |>
       mutate(across(everything(), as.character))
 
-    list(p1 = p1, p2 = p2, trial_df = trial_df, ts_df = ts_df)
+    list(p1 = p1, p2 = p2, trial_df = trial_df)
   }
 
   all_trial_dfs <- list()
