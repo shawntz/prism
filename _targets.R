@@ -57,6 +57,6 @@ list(
   ),
   tar_target(
     subject_ids,
-    get_all_subjects(demographics)
+    get_all_subject_ids(demographics)
   )
 )
