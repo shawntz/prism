@@ -51,12 +51,12 @@ tar_source()
 # Replace the target list below with your own:
 list(
   tar_target(
-    name = data,
-    command = tibble(x = rnorm(100), y = rnorm(100))
-    # format = "qs" # Efficient storage for general data objects.
+    demographics, 
+    "data/processed/phenotype/demographics_exclusions_n67.csv",
+    format = "file"
   ),
   tar_target(
-    name = model,
-    command = coefficients(lm(y ~ x, data = data))
+    subject_ids,
+    get_all_subjects(demographics)
   )
 )
