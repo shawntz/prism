@@ -9,7 +9,7 @@ library(targets)
 
 # Set target options:
 tar_option_set(
-  packages = c("tibble", "tidyverse") # Packages that your targets need for their tasks.
+  packages = c("fs", "splines", "glue", "patchwork", "grid", "tidyverse") # Packages that your targets need for their tasks.
   # format = "qs", # Optionally set the default storage format. qs is fast.
   #
   # Pipelines that take a long time to run may benefit from
@@ -51,12 +51,20 @@ tar_source()
 # Replace the target list below with your own:
 list(
   tar_target(
-    demographics, 
+    demographics,
     "data/processed/phenotype/demographics_exclusions_n67.csv",
     format = "file"
   ),
   tar_target(
     subject_ids,
     get_all_subject_ids(demographics)
+  ),
+  tar_target(
+    detrended_data,
+    detrend_runs(subject_ids)
+  ),
+  tar_target(
+    detrended_data_clean,
+    clean_data(detrended_data)
   )
 )
