@@ -224,6 +224,7 @@ detrend_runs <- function(subject_ids) {
 
   all_trial_dfs <- list()
 
+  fs::dir_create("reports")
   pdf("reports/detrend_comparison.pdf", width = 11, height = 17)
   for (sub in subject_ids) {
     plots <- list()
