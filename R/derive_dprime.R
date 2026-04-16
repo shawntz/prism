@@ -110,7 +110,7 @@ summarize_item_block <- function(df, group_vars) {
     mutate(
       item_hr  = item_hit / n_item_target,
       item_far = item_fa / n_item_foil,
-      item_dp  = calc_dprime(item_hit, item_fa, n_item_target, n_item_foil),
+      item_dp  = calc_dprime(item_hit, item_fa, n_item_target, n_item_foil)
     )
 }
 
@@ -135,7 +135,7 @@ summarize_item_reclassified <- function(df, group_vars) {
     mutate(
       item_hr  = item_hit / n_item_target,
       item_far = item_fa / n_item_foil,
-      item_dp  = calc_dprime(item_hit, item_fa, n_item_target, n_item_foil),
+      item_dp  = calc_dprime(item_hit, item_fa, n_item_target, n_item_foil)
     )
 }
 
@@ -160,7 +160,7 @@ summarize_src_block <- function(df, group_vars) {
     mutate(
       src_hr  = src_hit / n_src_target,
       src_far = src_fa / n_src_foil,
-      src_dp  = calc_dprime(src_hit, src_fa, n_src_target, n_src_foil),
+      src_dp  = calc_dprime(src_hit, src_fa, n_src_target, n_src_foil)
     )
 }
 
@@ -185,6 +185,6 @@ summarize_src_reclassified <- function(df, group_vars) {
     mutate(
       src_hr  = src_hit / n_src_target,
       src_far = src_fa / n_src_foil,
-      src_dp  = calc_dprime(src_hit, src_fa, n_src_target, n_src_foil),
+      src_dp  = calc_dprime(src_hit, src_fa, n_src_target, n_src_foil)
     )
 }
