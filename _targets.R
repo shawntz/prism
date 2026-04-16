@@ -66,5 +66,13 @@ list(
   tar_target(
     detrended_data_clean,
     clean_data(detrended_data)
+  ),
+  tar_target(
+    item_dprime,
+    get_item_dprime_by_subj_x_cond(detrended_data_clean)
+  ),
+  tar_target(
+    src_dprime,
+    get_src_dprime_by_subj_x_cond(detrended_data_clean)
   )
 )
