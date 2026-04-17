@@ -37,7 +37,7 @@ get_item_dprime_outliers <- function(df) {
     ) %>%
     mutate(
       z_score = scale(lapse_prop)[, 1],
-      is_extreme = abs(z_score) > 2 | any_dprime_zero_or_neg, # more than 2 SD from mean
+      is_extreme = abs(z_score) > 2 | any_dprime_zero_or_neg # more than 2 SD from mean
     )
 }
 
@@ -70,7 +70,7 @@ get_src_dprime_outliers <- function(df) {
     ) %>%
     mutate(
       z_score = scale(lapse_prop)[, 1],
-      is_extreme = abs(z_score) > 2 | any_dprime_zero_or_neg, # more than 2 SD from mean
+      is_extreme = abs(z_score) > 2 | any_dprime_zero_or_neg # more than 2 SD from mean
     )
 }
 
