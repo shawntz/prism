@@ -47,5 +47,26 @@ list(
   tar_target(
     detrended_data_clean_trimmed,
     filter_out_bad_ids(demographics, detrended_data_clean)
+  ),
+  tar_target(
+    good_subject_ids,
+    get_included_subject_ids(demographics)
+  ),
+  tar_target(
+    detrended_ts_file,
+    detrend_subject(
+      good_subject_ids,
+      detrended_data_clean_trimmed
+    ),
+    pattern = map(good_subject_ids),
+    format = "file"
+  ),
+  tar_target(
+    spline_fits,
+    extract_spline_fits(detrended_ts_file)
+  ),
+  tar_target(
+    avg_spline,
+    avg_spline_by_run(spline_fits)
   )
 )

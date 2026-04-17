@@ -5,7 +5,7 @@ extract_spline_fits <- function(ts_files) {
       return(NULL)
     }
 
-    ts |>
+    ts %>%
       filter(epoch %in% c("realtime1", "realtime2")) %>%
       group_by(subject, run) %>%
       mutate(run_sample = row_number()) %>%

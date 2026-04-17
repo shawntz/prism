@@ -20,9 +20,9 @@ detrend_runs <- function(subject_ids) {
     }
 
     epochs <- bind_rows(
-      eye$epoch_fixprestim[[block_name]] |> mutate(epoch = "fixprestim"),
-      eye$epoch_realtime1[[block_name]] |> mutate(epoch = "realtime1"),
-      eye$epoch_realtime2[[block_name]] |> mutate(epoch = "realtime2")
+      eye$epoch_fixprestim[[block_name]] %>% mutate(epoch = "fixprestim"),
+      eye$epoch_realtime1[[block_name]] %>% mutate(epoch = "realtime1"),
+      eye$epoch_realtime2[[block_name]] %>% mutate(epoch = "realtime2")
     ) %>%
       select(STIM, epoch, time_orig, all_of(pupil_col)) %>%
       arrange(STIM, time_orig)
@@ -47,7 +47,7 @@ detrend_runs <- function(subject_ids) {
       left_join(epochs, by = c("stim_file" = "STIM", "stim_occurrence")) %>%
       group_by(trial) %>%
       group_modify(~ {
-        d <- .x |> filter(epoch %in% c("realtime1", "realtime2"))
+        d <- .x %>% filter(epoch %in% c("realtime1", "realtime2"))
         pad <- tibble(
           stim_file = d$stim_file[1],
           burn_in_trial = d$burn_in_trial[1],
@@ -55,7 +55,7 @@ detrend_runs <- function(subject_ids) {
           epoch = NA_character_,
           time_orig = NA_real_,
           !!pupil_col := NA_real_
-        ) |> slice(rep(1, pad_n))
+        ) %>% slice(rep(1, pad_n))
         bind_rows(d, pad)
       }) %>%
       ungroup() %>%
@@ -63,7 +63,7 @@ detrend_runs <- function(subject_ids) {
 
     spline_fit <- lm(
       pupil_raw_deblink_detransient_interpolate_lpfilt ~ splines::ns(time, df = 5),
-      data = ts |> filter(
+      data = ts %>% filter(
         !is.na(pupil_raw_deblink_detransient_interpolate_lpfilt),
         epoch %in% c("realtime1", "realtime2")
       )
@@ -213,7 +213,7 @@ detrend_runs <- function(subject_ids) {
       ggtitle(paste(sub, "run", run, "- Detrended"))
 
     trial_df <- df %>%
-      mutate(subject = sub, run = run) |>
+      mutate(subject = sub, run = run) %>%
       mutate(across(everything(), as.character))
 
     list(p1 = p1, p2 = p2, trial_df = trial_df)
