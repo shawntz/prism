@@ -4,3 +4,7 @@
 /plots/.ipynb_checkpoints
 *.parquet
 .DS_Store
+/data/interim
+._*
+/data/raw
+/data/processed
