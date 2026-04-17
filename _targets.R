@@ -68,5 +68,37 @@ list(
   tar_target(
     avg_spline,
     avg_spline_by_run(spline_fits)
+  ),
+  tar_target(
+    item_dprime_trimmed,
+    get_item_dprime_by_subj_x_cond(detrended_data_clean_trimmed)
+  ),
+  tar_target(
+    src_dprime_trimmed,
+    get_src_dprime_by_subj_x_cond(detrended_data_clean_trimmed)
+  ),
+  tar_target(
+    item_dprime_trimmed_reclassified,
+    get_item_dprime_by_subj_x_cond_reclassified(detrended_data_clean_trimmed)
+  ),
+  tar_target(
+    src_dprime_trimmed_reclassified,
+    get_src_dprime_by_subj_x_cond_reclassified(detrended_data_clean_trimmed)
+  ),
+  tar_target(
+    item_dprime_trimmed_rwstatus,
+    get_item_dprime_by_subj_x_cond_x_rwstatus(detrended_data_clean_trimmed)
+  ),
+  tar_target(
+    src_dprime_trimmed_rwstatus,
+    get_src_dprime_by_subj_x_cond_x_rwstatus(detrended_data_clean_trimmed)
+  ),
+  tar_target(
+    item_dprime_trimmed_rwstatus_reclassified,
+    get_item_dprime_by_subj_x_cond_x_rwstatus_reclassified(detrended_data_clean_trimmed)
+  ),
+  tar_target(
+    src_dprime_trimmed_rwstatus_reclassified,
+    get_src_dprime_by_subj_x_cond_x_rwstatus_reclassified(detrended_data_clean_trimmed)
   )
 )
