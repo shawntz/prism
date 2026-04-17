@@ -35,5 +35,17 @@ list(
   tar_target(
     src_dprime,
     get_src_dprime_by_subj_x_cond(detrended_data_clean)
+  ),
+  tar_target(
+    ids_to_exclude,
+    identify_outliers(item_dprime, src_dprime)
+  ),
+  tar_target(
+    id_verification,
+    verify_ids(subject_ids, ids_to_exclude)
+  ),
+  tar_target(
+    detrended_data_clean_trimmed,
+    filter_out_bad_ids(demographics, detrended_data_clean)
   )
 )
