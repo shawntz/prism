@@ -49,12 +49,16 @@ list(
     filter_out_bad_ids(demographics, detrended_data_clean)
   ),
   tar_target(
+    good_subject_ids,
+    get_included_subject_ids(demographics)
+  ),
+  tar_target(
     detrended_ts_file,
     detrend_subject(
-      subject_ids,
+      good_subject_ids,
       detrended_data_clean_trimmed
     ),
-    pattern = map(subject_ids),
+    pattern = map(good_subject_ids),
     format = "file"
   ),
   tar_target(
