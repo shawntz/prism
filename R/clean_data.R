@@ -15,7 +15,7 @@ fix_ids <- function(df) {
 
 fix_colnames <- function(df) {
   df %>%
-    rename_with(\(x) paste0("dim.top_level__", x))
+    rename_with(~ paste0("dim.top_level__", .x))
 }
 
 coerce_types <- function(df) {
