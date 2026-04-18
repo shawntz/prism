@@ -1,0 +1,40 @@
+---
+title: 'demographics analysis'
+author: "shawn schwartz"
+output: html_document
+date: "2026-04-18"
+---
+
+```{r setup, include=FALSE}
+library(here)
+library(targets)
+library(tidyverse)
+```
+
+```{r}
+df_demographics = "data/processed/phenotype/demographics_exclusions_n67.csv" |>
+  here() |> 
+  read_csv()
+
+df_demographics |> head()
+```
+
+## total enrolled in study
+
+```{r}
+df_demographics |> nrow()
+
+table(df_demographics$sex)
+
+mean(df_demographics$age) |> round(2)
+sd(df_demographics$age) |> round(2)
+min(df_demographics$age) 
+max(df_demographics$age)
+```
+
+## exclusions
+
+```{r}
+table(df_demographics$exclude)
+```
+
