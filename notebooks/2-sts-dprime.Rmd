@@ -1,0 +1,1499 @@
+---
+title: "dprime analysis"
+author: "shawn schwartz"
+output: html_document
+date: "2026-04-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(here)
+library(targets)
+library(knitr)
+library(kableExtra)
+library(showtext)
+library(brms)
+library(tidybayes)
+library(emmeans)
+library(ggdist)
+library(patchwork)
+library(tidyverse)
+
+font_add_google("Nunito", "Inter", regular.wt = 300)
+showtext_auto()
+showtext_opts(dpi = 300)
+
+theme_set(
+  theme_classic(base_size = 24, base_family = "Inter") +
+    theme(text = element_text(size = 24))
+)
+
+knitr::opts_chunk$set(comment = "", fig.show = "hold")
+
+options(dplyr.summarise.inform = FALSE)
+options(ggplot2.discrete.color = RColorBrewer::brewer.pal(9, "Set1"))
+
+set.seed(512)
+
+cond_levels = c(
+  "no_lapse_no_trigger",
+  "lapse_no_trigger",
+  "lapse_trigger"
+)
+
+cond_labels = c(
+  "NoLapse",
+  "Lapse",
+  "LapseTrigger"
+)
+```
+
+# Item *d'*
+
+```{r}
+df_item = tar_read(item_dprime_trimmed, store = here("_targets")) |> 
+  mutate(
+    condition = factor(
+      dim.trigger_condition,
+      levels = cond_levels,
+      labels = cond_labels
+    )
+  )
+
+df_item |> head()
+```
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+fit_brm_item_dprime = brm(
+  item_dp ~ 0 + dim.trigger_condition,
+  data = df_item,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_item_dprime")
+)
+
+fit_brm_item_dprime |> summary()
+fit_brm_item_dprime |> plot(nvariables = 8)
+fit_brm_item_dprime |> pp_check(ndraws = 100)
+fit_brm_item_dprime |> emmeans(pairwise ~ dim.trigger_condition)
+```
+
+## Lapse < NoLapse
+
+```{r}
+fit_brm_item_dprime |> 
+  hypothesis(
+    "dim.trigger_conditionlapse_no_trigger < dim.trigger_conditionno_lapse_no_trigger"
+  )
+```
+
+## LapseTrigger > Lapse
+
+```{r}
+fit_brm_item_dprime |> 
+  hypothesis(
+    "dim.trigger_conditionlapse_trigger > dim.trigger_conditionlapse_no_trigger"
+  )
+```
+
+## LapseTrigger < NoLapse
+
+```{r}
+fit_brm_item_dprime |> 
+  hypothesis(
+    "dim.trigger_conditionlapse_trigger < dim.trigger_conditionno_lapse_no_trigger"
+  )
+```
+
+```{r fig.width=16, fig.height=15}
+contrast_draws = fit_brm_item_dprime |> 
+  spread_draws(
+    b_dim.trigger_conditionno_lapse_no_trigger,
+    b_dim.trigger_conditionlapse_no_trigger,
+    b_dim.trigger_conditionlapse_trigger
+  ) |> 
+  mutate(
+    `OS - SOS` = b_dim.trigger_conditionno_lapse_no_trigger - b_dim.trigger_conditionlapse_no_trigger,
+    `SOS/Trigger - SOS` = b_dim.trigger_conditionlapse_trigger - b_dim.trigger_conditionlapse_no_trigger,
+    `OS - SOS/Trigger` = b_dim.trigger_conditionno_lapse_no_trigger - b_dim.trigger_conditionlapse_trigger
+  ) |> 
+  pivot_longer(
+    cols = matches("-"),
+    names_to = "contrast",
+    values_to = ".value"
+  ) |> 
+  mutate(
+    contrast = factor(contrast, levels = c(
+      "OS - SOS/Trigger", # bottom
+      "SOS/Trigger - SOS", # middle
+      "OS - SOS" # top
+    ))
+  )
+
+fill_by_type = c(
+  "OS - SOS" = "#D62729",
+  "SOS/Trigger - SOS" = "#F67E00",
+  "OS - SOS/Trigger" = "#FCBF4A"
+)
+
+plot_item_memory_contrasts = contrast_draws |> 
+  ggplot(aes(x = .value, y = contrast, fill = contrast)) +
+  stat_halfeye(
+    point_interval = median_hdi,
+    .width = c(0.66, 0.9),
+    slab_alpha = 0.8,
+    normalize = "panels",
+    point_size = 4
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.66, color = "black") +
+  geom_text(
+    data = contrast_draws |> group_by(contrast) |> summarize(m = median(.value)),
+    aes(x = m, y = contrast, label = contrast),
+    vjust = -0.8, hjust = 0.5, size = 6, inherit.aes = FALSE, family = "Inter"
+  ) +
+  scale_fill_manual(values = fill_by_type) +
+  scale_y_discrete(labels = NULL) +
+  labs(
+    x = "Posterior contrast (d\u2032)",
+    y = NULL,
+    title = "Item memory"
+  ) +
+  coord_cartesian(xlim = c(-0.75, 0.75)) +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  )
+
+plot_item_memory_contrasts
+```
+
+```{r}
+df_item_wide = df_item |> 
+  select(dim.top_level__subject_id, dim.trigger_condition, item_dp) |> 
+  pivot_wider(
+    id_cols = dim.top_level__subject_id,
+    names_from = dim.trigger_condition,
+    values_from = item_dp,
+    names_glue = "{dim.trigger_condition}_{.value}"
+  )
+
+df_item_wide |> head()
+```
+
+```{r}
+condition_colors = c(
+  "OS" = "steelblue",
+  "SOS" = "firebrick",
+  "SOS/Trigger" = "darkmagenta"
+)
+
+plot_means = function(data, mem_type = c("item", "src")) {
+  mem_type = match.arg(mem_type)
+  dp_suffix = paste0("_", mem_type, "_dp")
+  title = if (mem_type == "item") "Item memory" else "Source memory"
+  
+  col_nolapse = paste0("no_lapse_no_trigger", dp_suffix)
+  col_lnt = paste0("lapse_no_trigger", dp_suffix)
+  col_lt = paste0("lapse_trigger", dp_suffix)
+  
+  long = data |> 
+    select(dim.top_level__subject_id, all_of(c(col_nolapse, col_lnt, col_lt))) |> 
+    pivot_longer(-dim.top_level__subject_id, names_to = "condition", values_to = "dprime") |> 
+    mutate(
+      trigger_condition = case_when(
+        condition == col_lnt ~ "SOS",
+        condition == col_lt ~ "SOS/Trigger",
+        condition == col_nolapse ~ "OS"
+      ),
+      trigger_condition = factor(trigger_condition, levels = c(
+        "OS", "SOS", "SOS/Trigger"
+      ))
+    )
+  
+  # Cousinaeu-Morey within-subjects SEM
+  k = n_distinct(long$trigger_condition)
+  normed = long |> 
+    group_by(dim.top_level__subject_id) |> 
+    mutate(dprime_norm = dprime - mean(dprime, na.rm = TRUE)) |> 
+    ungroup() |> 
+    mutate(dprime_norm = dprime_norm + mean(long$dprime, na.rm = TRUE))
+  
+  ws_sem = normed |> 
+    group_by(trigger_condition) |> 
+    summarize(
+      sem = sd(dprime_norm, na.rm = TRUE) / sqrt(sum(!is.na(dprime_norm))) * sqrt(k / (k - 1)),
+      .groups = "drop"
+    )
+  
+  means_df = long |> 
+    group_by(trigger_condition) |> 
+    summarize(mean_dp = mean(dprime, na.rm = TRUE), .groups = "drop") |> 
+    left_join(ws_sem, by = "trigger_condition")
+  
+  ggplot(long, aes(x = trigger_condition, y = dprime)) +
+    geom_pointrange(
+      data = means_df,
+      aes(x = trigger_condition, y = mean_dp,
+          ymin = mean_dp - sem, ymax = mean_dp + sem,
+          color = trigger_condition),
+      size = 0.8, linewidth = 1
+    ) +
+    scale_color_manual(values = condition_colors) +
+    scale_fill_manual(values = condition_colors) +
+    labs(
+      x = " ",
+      y = "d\u2032",
+      title = title
+    ) +
+    theme(
+      axis.title.y = element_text(face = "italic"),
+      legend.position = "none"
+    )
+}
+
+p1 = plot_means(df_item_wide, "item")
+p1
+```
+
+```{r}
+make_violin_poly = function(vals, x_pos, max_width = 0.5, side = "right") {
+  kde = density(vals, n = 300)
+  d = kde$y / max(kde$y) * max_width
+  if (side == "left") d = -d
+  
+  above = which(kde$x >= 0)
+  below = which(kde$x <= 0)
+  
+  bind_rows(
+    tibble(
+      x = c(x_pos, x_pos + d[above], x_pos),
+      y = c(kde$x[min(above)], kde$x[above], kde$x[max(above)]),
+      fill = "pos"
+    ),
+    tibble(
+      x = c(x_pos, x_pos + d[below], x_pos),
+      y = c(kde$x[min(below)], kde$x[below], kde$x[max(below)]),
+      fill = "neg"
+    )
+  )
+}
+
+plot_raincloud_diff = function(data, mem_type = c("item", "src")) {
+  mem_type = match.arg(mem_type)
+  dp_suffix = paste0("_", mem_type, "_dp")
+  title = if (mem_type == "item") "Item memory" else "Source memory"
+  
+  col_nolapse = paste0("no_lapse_no_trigger", dp_suffix)
+  col_lnt = paste0("lapse_no_trigger", dp_suffix)
+  col_lt = paste0("lapse_trigger", dp_suffix)
+  
+  diff_long = data |> 
+    transmute(
+      dim.top_level__subject_id,
+      lnt_nlnt = .data[[col_lnt]] - .data[[col_nolapse]],
+      lt_lnt = .data[[col_lt]] - .data[[col_lnt]]
+    ) |> 
+    pivot_longer(
+      -dim.top_level__subject_id, 
+      names_to = "comparison", 
+      values_to = "diff"
+    ) |> 
+    group_by(dim.top_level__subject_id) |> 
+    mutate(jitter_offset = runif(1, 0.05, 0.25)) |> 
+    ungroup() |> 
+    mutate(
+      x_pos = ifelse(comparison == "lnt_nlnt", 0, 1.5),
+      sign_group = ifelse(diff >= 0, "pos", "neg"),
+      x_jitter = x_pos + ifelse(comparison == "lnt_nlnt", jitter_offset, -jitter_offset)
+    )
+  
+  violin_polys = diff_long |> 
+    distinct(comparison, x_pos) |> 
+    mutate(side = ifelse(comparison == "lnt_nlnt", "left", "right")) |> 
+    rowwise() |> 
+    mutate(
+      poly = list(
+        make_violin_poly(diff_long$diff[diff_long$comparison == comparison], x_pos, side = side)
+      )
+    ) |> 
+    unnest(poly)
+  
+  summary_df = diff_long |> 
+    group_by(comparison, x_pos) |> 
+    summarize(
+      mean_val = mean(diff, na.rm = TRUE),
+      sem = sd(diff, na.rm = TRUE) / sqrt(sum(!is.na(diff))),
+      .groups = "drop"
+    )
+  
+  x_labels = c(
+    "0" = "SOS - OS",
+    "1.5" = "SOS/Trigger - SOS"
+  )
+  
+  ggplot() +
+    geom_hline(yintercept = 0, linetype = "dashed", linewidth = 1) +
+    geom_polygon(
+      data = violin_polys,
+      aes(x = x, y = y, group = interaction(comparison, fill), fill = fill),
+      alpha = 0.9,
+      color = NA
+    ) +
+    geom_line(
+      data = diff_long,
+      aes(x = x_jitter, y = diff, group = dim.top_level__subject_id),
+      color = "gray",
+      alpha = 0.33,
+      linewidth = 0.5
+    ) +
+    geom_point(
+      data = diff_long,
+      aes(x = x_jitter, y = diff, fill = sign_group),
+      shape = 21,
+      size = 2.5,
+      alpha = 0.8,
+      color = "white",
+      stroke = 0.5
+    ) +
+    geom_segment(
+      data = summary_df,
+      aes(x = x_pos, xend = x_pos,
+          y = mean_val - sem, yend = mean_val + sem),
+      linewidth = 1.5
+    ) +
+    geom_segment(
+      data = summary_df,
+      aes(x = x_pos - 0.04, xend = x_pos + 0.04,
+          y = mean_val - sem, yend = mean_val - sem),
+      linewidth = 1.5
+    ) +
+    geom_segment(
+      data = summary_df,
+      aes(x = x_pos - 0.04, xend = x_pos + 0.04,
+          y = mean_val + sem, yend = mean_val + sem),
+      linewidth = 1.5
+    ) +
+    scale_fill_manual(
+      values = c("pos" = "#4B999E", "neg" = "#D7753E"),
+      labels = c("pos" = "Δ ≥ 0", "neg" = "Δ < 0")
+    ) +
+    scale_x_continuous(
+      breaks = c(0, 1.5),
+      labels = x_labels[c("0", "1.5")],
+      limits = c(-0.8, 2.3)
+    ) +
+    scale_y_continuous(breaks = seq(-2, 2, 1)) +
+    labs(
+      x = " ",
+      y = "Δd\u2032",
+      title = title,
+      fill = NULL
+    ) +
+    theme(
+      axis.title.y = element_text(face = "italic"),
+      legend.position = c(0.85, 0.1),
+      legend.background = element_blank(),
+      legend.text = element_text(size = 11)
+    )
+}
+
+p2 = plot_raincloud_diff(df_item_wide, "item")
+p2
+```
+
+# Source *d'*
+
+```{r}
+df_src = tar_read(src_dprime_trimmed, store = here("_targets")) |> 
+  mutate(
+    condition = factor(
+      dim.trigger_condition,
+      levels = cond_levels,
+      labels = cond_labels
+    )
+  )
+
+df_src |> head()
+```
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+fit_brm_src_dprime = brm(
+  src_dp ~ 0 + dim.trigger_condition,
+  data = df_src,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_src_dprime")
+)
+
+fit_brm_src_dprime |> summary()
+fit_brm_src_dprime |> plot(nvariables = 8)
+fit_brm_src_dprime |> pp_check(ndraws = 100)
+fit_brm_src_dprime |> emmeans(pairwise ~ dim.trigger_condition)
+```
+
+## Lapse < NoLapse
+
+```{r}
+fit_brm_src_dprime |> 
+  hypothesis(
+    "dim.trigger_conditionlapse_no_trigger < dim.trigger_conditionno_lapse_no_trigger"
+  )
+```
+
+## LapseTrigger > Lapse
+
+```{r}
+fit_brm_src_dprime |> 
+  hypothesis(
+    "dim.trigger_conditionlapse_trigger > dim.trigger_conditionlapse_no_trigger"
+  )
+```
+
+## LapseTrigger < NoLapse
+
+```{r}
+fit_brm_src_dprime |> 
+  hypothesis(
+    "dim.trigger_conditionlapse_trigger < dim.trigger_conditionno_lapse_no_trigger"
+  )
+```
+
+```{r fig.width=16, fig.height=15}
+contrast_draws = fit_brm_src_dprime |> 
+  spread_draws(
+    b_dim.trigger_conditionno_lapse_no_trigger,
+    b_dim.trigger_conditionlapse_no_trigger,
+    b_dim.trigger_conditionlapse_trigger
+  ) |> 
+  mutate(
+    `OS - SOS` = b_dim.trigger_conditionno_lapse_no_trigger - b_dim.trigger_conditionlapse_no_trigger,
+    `SOS/Trigger - SOS` = b_dim.trigger_conditionlapse_trigger - b_dim.trigger_conditionlapse_no_trigger,
+    `OS - SOS/Trigger` = b_dim.trigger_conditionno_lapse_no_trigger - b_dim.trigger_conditionlapse_trigger
+  ) |> 
+  pivot_longer(
+    cols = matches("-"),
+    names_to = "contrast",
+    values_to = ".value"
+  ) |> 
+  mutate(
+    contrast = factor(contrast, levels = c(
+      "OS - SOS/Trigger", # bottom
+      "SOS/Trigger - SOS", # middle
+      "OS - SOS" # top
+    ))
+  )
+
+fill_by_type = c(
+  "OS - SOS" = "#D62729",
+  "SOS/Trigger - SOS" = "#F67E00",
+  "OS - SOS/Trigger" = "#FCBF4A"
+)
+
+plot_src_memory_contrasts = contrast_draws |> 
+  ggplot(aes(x = .value, y = contrast, fill = contrast)) +
+  stat_halfeye(
+    point_interval = median_hdi,
+    .width = c(0.66, 0.9),
+    slab_alpha = 0.8,
+    normalize = "panels",
+    point_size = 4
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.66, color = "black") +
+  geom_text(
+    data = contrast_draws |> group_by(contrast) |> summarize(m = median(.value)),
+    aes(x = m, y = contrast, label = contrast),
+    vjust = -0.8, hjust = 0.5, size = 6, inherit.aes = FALSE, family = "Inter"
+  ) +
+  scale_fill_manual(values = fill_by_type) +
+  scale_y_discrete(labels = NULL) +
+  labs(
+    x = "Posterior contrast (d\u2032)",
+    y = NULL,
+    title = "Source memory"
+  ) +
+  coord_cartesian(xlim = c(-0.75, 0.75)) +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  )
+
+plot_src_memory_contrasts
+```
+
+```{r}
+df_src_wide = df_src |> 
+  select(dim.top_level__subject_id, dim.trigger_condition, src_dp) |> 
+  pivot_wider(
+    id_cols = dim.top_level__subject_id,
+    names_from = dim.trigger_condition,
+    values_from = src_dp,
+    names_glue = "{dim.trigger_condition}_{.value}"
+  )
+
+df_src_wide |> head()
+```
+
+```{r}
+p3 = plot_means(df_src_wide, "src")
+p3
+```
+
+```{r}
+p4 = plot_raincloud_diff(df_src_wide, "src")
+p4
+```
+
+# Figure 2
+
+```{r fig.width=18, fig.height=12}
+row1 = p1 + p2 + plot_item_memory_contrasts + plot_layout(widths = c(1, 2, 1))
+row2 = p3 + p4 + plot_src_memory_contrasts + plot_layout(widths = c(1, 2, 1))
+
+row1 / row2 +
+  plot_annotation(tag_levels = "a") &
+  theme(plot.tag = element_text(size = 32, face = "bold", family = "Inter"))
+
+ggsave(here("reports/figures/fig2.pdf"), width = 20, height = 12, dpi = 300, bg = "white")
+ggsave(here("reports/figures/fig2.png"), width = 20, height = 12, dpi = 300, bg = "white")
+```
+
+# Post hoc reclassification
+
+```{r}
+cond_levels = c(
+  "nolapse_notrigger",
+  "lapse_notrigger",
+  "lapse_trigger",
+  "nolapse_trigger"
+)
+
+cond_labels = c(
+  "NoLapse",
+  "Lapse",
+  "LapseTrigger",
+  "NoLapseTrigger"
+)
+
+df_trials = tar_read(detrended_data_clean_trimmed, store = here("_targets"))
+
+df_trials |> head()
+```
+
+## Trial counts
+
+### Original (online) classification
+
+```{r}
+df_trans_table = df_trials |> 
+  filter(
+    dim.top_level__detrended_status %in% c(
+      "lapse_notrigger",
+      "lapse_trigger",
+      "nolapse_notrigger",
+      "nolapse_trigger"
+    )
+  )
+
+df_trans_table$dim.trigger_condition |> table()
+```
+
+### Original (online) classification vs. spline reclassified status
+
+```{r}
+table(
+  df_trans_table$dim.trigger_condition,
+  df_trans_table$dim.top_level__detrended_status
+)
+```
+
+## Model fitting
+
+### Item *d'*
+
+```{r}
+df_item_reclass = tar_read(item_dprime_trimmed_reclassified, store = here("_targets")) |> 
+  mutate(
+    condition = factor(
+      dim.top_level__detrended_status,
+      levels = cond_levels,
+      labels = cond_labels
+    )
+  )
+
+df_item_reclass |> head()
+
+table(
+  df_item_reclass$condition,
+  df_item_reclass$dim.top_level__detrended_status
+)
+```
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+fit_brm_item_dprime_reclassified = brm(
+  item_dp ~ 0 + condition,
+  data = df_item_reclass,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_item_dprime_reclassified")
+)
+
+fit_brm_item_dprime_reclassified |> summary()
+fit_brm_item_dprime_reclassified |> plot(nvariables = 8)
+fit_brm_item_dprime_reclassified |> pp_check(ndraws = 100)
+fit_brm_item_dprime_reclassified |> emmeans(pairwise ~ condition)
+```
+
+#### Lapse < NoLapse
+
+```{r}
+fit_brm_item_dprime_reclassified |> 
+  hypothesis("conditionLapse < conditionNoLapse")
+```
+
+#### LapseTrigger > Lapse
+
+```{r}
+fit_brm_item_dprime_reclassified |> 
+  hypothesis("conditionLapseTrigger > conditionLapse")
+```
+
+#### LapseTrigger < NoLapse
+
+```{r}
+fit_brm_item_dprime_reclassified |> 
+  hypothesis("conditionLapseTrigger < conditionNoLapse")
+```
+
+#### Posterior contrasts plot
+
+```{r fig.width=16, fig.height=15}
+contrast_draws = fit_brm_item_dprime_reclassified |> 
+  spread_draws(
+    b_conditionNoLapse,
+    b_conditionLapse,
+    b_conditionLapseTrigger
+  ) |> 
+  mutate(
+    `OS - SOS` = b_conditionNoLapse - b_conditionLapse,
+    `SOS/Trigger - SOS` = b_conditionLapseTrigger - b_conditionLapse,
+    `OS - SOS/Trigger` = b_conditionNoLapse - b_conditionLapseTrigger
+  ) |> 
+  pivot_longer(
+    cols = matches("-"),
+    names_to = "contrast",
+    values_to = ".value"
+  ) |> 
+  mutate(
+    contrast = factor(contrast, levels = c(
+      "OS - SOS/Trigger", # bottom
+      "SOS/Trigger - SOS", # middle
+      "OS - SOS" # top
+    ))
+  )
+
+fill_by_type = c(
+  "OS - SOS" = "#D62729",
+  "SOS/Trigger - SOS" = "#F67E00",
+  "OS - SOS/Trigger" = "#FCBF4A"
+)
+
+plot_item_memory_contrasts_reclassified = contrast_draws |> 
+  ggplot(aes(x = .value, y = contrast, fill = contrast)) +
+  stat_halfeye(
+    point_interval = median_hdi,
+    .width = c(0.66, 0.9),
+    slab_alpha = 0.8,
+    normalize = "panels",
+    point_size = 4
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.66, color = "black") +
+  geom_text(
+    data = contrast_draws |> group_by(contrast) |> summarize(m = median(.value)),
+    aes(x = m, y = contrast, label = contrast),
+    vjust = -0.8, hjust = 0.5, size = 6, inherit.aes = FALSE, family = "Inter"
+  ) +
+  scale_fill_manual(values = fill_by_type) +
+  scale_y_discrete(labels = NULL) +
+  labs(
+    x = "Posterior contrast (d\u2032)",
+    y = NULL,
+    title = "Item memory (reclassified)"
+  ) +
+  coord_cartesian(xlim = c(-0.75, 0.75)) +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  )
+
+plot_item_memory_contrasts_reclassified
+```
+
+### Source *d'*
+
+```{r}
+df_src_reclass = tar_read(src_dprime_trimmed_reclassified, store = here("_targets")) |> 
+  mutate(
+    condition = factor(
+      dim.top_level__detrended_status,
+      levels = cond_levels,
+      labels = cond_labels
+    )
+  )
+
+df_src_reclass |> head()
+
+table(
+  df_src_reclass$condition,
+  df_src_reclass$dim.top_level__detrended_status
+)
+```
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+fit_brm_src_dprime_reclassified = brm(
+  src_dp ~ 0 + condition,
+  data = df_src_reclass,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_src_dprime_reclassified")
+)
+
+fit_brm_src_dprime_reclassified |> summary()
+fit_brm_src_dprime_reclassified |> plot(nvariables = 8)
+fit_brm_src_dprime_reclassified |> pp_check(ndraws = 100)
+fit_brm_src_dprime_reclassified |> emmeans(pairwise ~ condition)
+```
+
+#### Lapse < NoLapse
+
+```{r}
+fit_brm_src_dprime_reclassified |> 
+  hypothesis("conditionLapse < conditionNoLapse")
+```
+
+#### LapseTrigger > Lapse
+
+```{r}
+fit_brm_src_dprime_reclassified |> 
+  hypothesis("conditionLapseTrigger > conditionLapse")
+```
+
+#### LapseTrigger < NoLapse
+
+```{r}
+fit_brm_src_dprime_reclassified |> 
+  hypothesis("conditionLapseTrigger < conditionNoLapse")
+```
+
+#### Posterior contrasts plot
+
+```{r fig.width=16, fig.height=15}
+contrast_draws = fit_brm_src_dprime_reclassified |> 
+  spread_draws(
+    b_conditionNoLapse,
+    b_conditionLapse,
+    b_conditionLapseTrigger
+  ) |> 
+  mutate(
+    `OS - SOS` = b_conditionNoLapse - b_conditionLapse,
+    `SOS/Trigger - SOS` = b_conditionLapseTrigger - b_conditionLapse,
+    `OS - SOS/Trigger` = b_conditionNoLapse - b_conditionLapseTrigger
+  ) |> 
+  pivot_longer(
+    cols = matches("-"),
+    names_to = "contrast",
+    values_to = ".value"
+  ) |> 
+  mutate(
+    contrast = factor(contrast, levels = c(
+      "OS - SOS/Trigger", # bottom
+      "SOS/Trigger - SOS", # middle
+      "OS - SOS" # top
+    ))
+  )
+
+fill_by_type = c(
+  "OS - SOS" = "#D62729",
+  "SOS/Trigger - SOS" = "#F67E00",
+  "OS - SOS/Trigger" = "#FCBF4A"
+)
+
+plot_src_memory_contrasts_reclassified = contrast_draws |> 
+  ggplot(aes(x = .value, y = contrast, fill = contrast)) +
+  stat_halfeye(
+    point_interval = median_hdi,
+    .width = c(0.66, 0.9),
+    slab_alpha = 0.8,
+    normalize = "panels",
+    point_size = 4
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.66, color = "black") +
+  geom_text(
+    data = contrast_draws |> group_by(contrast) |> summarize(m = median(.value)),
+    aes(x = m, y = contrast, label = contrast),
+    vjust = -0.8, hjust = 0.5, size = 6, inherit.aes = FALSE, family = "Inter"
+  ) +
+  scale_fill_manual(values = fill_by_type) +
+  scale_y_discrete(labels = NULL) +
+  labs(
+    x = "Posterior contrast (d\u2032)",
+    y = NULL,
+    title = "Source memory (reclassified)"
+  ) +
+  coord_cartesian(xlim = c(-0.75, 0.75)) +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  )
+
+plot_src_memory_contrasts_reclassified
+```
+
+## Effect contrasts
+
+Here, we create a 6-cell variable crossing online classification and reclassified status
+so that we can test contrastss on specific cells of the transition table.
+
+```{r}
+source(here("R/derive_dprime.R"))
+
+df_item_cells = df_trials |> 
+  filter(
+    !dim.top_level__burn_in_trial,
+    !dim.ret_response_item_acc %in% c("blink", "NO_RESPONSE"),
+    !dim.top_level__detrended_status %in% "NA_notrigger"
+  ) |> 
+  mutate(
+    cell = paste(dim.trigger_condition, dim.top_level__detrended_status, sep = "__")
+  ) |> 
+  group_by(dim.top_level__subject_id, cell) |> 
+  summarise(
+    item_hit       = sum(dim.ret_response_item_acc == "Item Hit"),
+    item_miss      = sum(dim.ret_response_item_acc == "Item Miss"),
+    item_fa        = sum(dim.ret_response_item_acc == "Item FA"),
+    item_cr        = sum(dim.ret_response_item_acc == "Item CR"),
+    n_item_target  = sum(dim.top_level__enc_goal %in% c("BGSM", "PLUP")),
+    n_item_foil    = sum(dim.top_level__enc_goal == "NOV"),
+    n_item_total   = item_hit + item_miss + item_fa + item_cr,
+    .groups        = "drop"
+  ) %>%
+  mutate(
+    item_dp  = calc_dprime(item_hit, item_fa, n_item_target, n_item_foil),
+    cell = factor(cell, levels = c(
+      "lapse_no_trigger__lapse_notrigger",    # 2011
+      "no_lapse_no_trigger__lapse_notrigger", # 511
+      "lapse_no_trigger__nolapse_notrigger",  # 2466
+      "no_lapse_no_trigger__nolapse_notrigger", # 3626
+      "lapse_trigger__lapse_trigger",         # 2016
+      "lapse_trigger__nolapse_trigger"        # 2451
+    ))
+  )
+
+table(df_item_cells$cell)
+```
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+fit_brm_item_dprime_cells = brm(
+  item_dp ~ 0 + cell,
+  data = df_item_cells,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_item_dprime_cells")
+)
+
+fit_brm_item_dprime_cells |> summary()
+fit_brm_item_dprime_cells |> plot(nvariables = 8)
+fit_brm_item_dprime_cells |> pp_check(ndraws = 100)
+fit_brm_item_dprime_cells |> emmeans(pairwise ~ cell)
+```
+
+### Cell-level *d'* ranking
+
+```{r fig.width=10, fig.height=10}
+cell_labels = c(
+  "no_lapse_no_trigger__lapse_notrigger" = "Online OS -> SOS", #"511",
+  "lapse_no_trigger__lapse_notrigger" = "Drift-resistant SOS", #"2011",
+  "lapse_no_trigger__nolapse_notrigger" = "Drift-driven SOS", #"2466",
+  "lapse_trigger__lapse_trigger" = "SOS-triggered", #"2016",
+  "lapse_trigger__nolapse_trigger" = "SOS-triggered -> OS", #"2451",
+  "no_lapse_no_trigger__nolapse_notrigger" = "Steadfast OS" #"3626"
+)
+
+# order by posterior mean d'
+cell_order = fit_brm_item_dprime_cells |> 
+  spread_draws(
+    b_celllapse_no_trigger__lapse_notrigger,
+    b_cellno_lapse_no_trigger__lapse_notrigger,
+    b_celllapse_no_trigger__nolapse_notrigger,
+    b_celllapse_trigger__lapse_trigger,
+    b_celllapse_trigger__nolapse_trigger,
+    b_cellno_lapse_no_trigger__nolapse_notrigger
+  ) |> 
+  pivot_longer(starts_with("b_cell"), names_to = "cell", values_to = "dp") |> 
+  mutate(cell = str_remove(cell, "^b_cell")) |> 
+  group_by(cell) |> 
+  summarise(mean_dp = mean(dp)) |> 
+  arrange(mean_dp) |> 
+  pull(cell)
+
+cell_draws = fit_brm_item_dprime_cells |> 
+  spread_draws(
+    b_celllapse_no_trigger__lapse_notrigger,
+    b_cellno_lapse_no_trigger__lapse_notrigger,
+    b_celllapse_no_trigger__nolapse_notrigger,
+    b_celllapse_trigger__lapse_trigger,
+    b_celllapse_trigger__nolapse_trigger,
+    b_cellno_lapse_no_trigger__nolapse_notrigger
+  ) |> 
+  pivot_longer(starts_with("b_cell"), names_to = "cell", values_to = "dp") |> 
+  mutate(
+    cell = str_remove(cell, "^b_cell"),
+    cell = factor(cell, levels = cell_order),
+    label = cell_labels[as.character(cell)]
+  ) 
+
+cell_colors = c(
+  "no_lapse_no_trigger__lapse_notrigger" = "#C84D4C", # 511
+  "lapse_no_trigger__lapse_notrigger" = "#D37538", # 2011
+  "lapse_no_trigger__nolapse_notrigger" = "#CE9A28", # 2466
+  "lapse_trigger__lapse_trigger" = "#9163C1", # 2016
+  "lapse_trigger__nolapse_trigger" = "#3F78C1", # 2451
+  "no_lapse_no_trigger__nolapse_notrigger" = "#356920" # 3626
+)
+
+plot_dprime_bars = ggplot(cell_draws, aes(x = reorder(label, dp, FUN = median), y = dp, fill = cell)) + 
+  stat_summary(fun = mean, geom = "bar", width = 0.4, alpha = 1.0) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, linewidth = 0.7) +
+  scale_fill_manual(values = cell_colors, guide = "none") +
+  scale_y_continuous(expand = c(0,0)) + 
+  labs(
+    x = NULL,
+    y = "Item d\u2032"
+    # title = "Item d\u2032 by online × reclassified cell"
+  ) +
+  theme(
+    # text = element_text(size = 8),
+    # axis.text.x = element_text(size = 8, lineheight = 0.9, angle = 90, vjust = 0.5),
+    # axis.text.x = element_text(lineheight = 0.9, angle = 90, vjust = 0.5),
+    legend.position = "none"
+  ) +
+  coord_flip()
+
+plot_dprime_bars
+```
+
+### Pooled lapse effect: lapse_notrigger < nolapse_notrigger
+
+```{r}
+# (2011 + 511) < (2466 + 3626)
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "(celllapse_no_trigger__lapse_notrigger + cellno_lapse_no_trigger__lapse_notrigger) / 2 < (celllapse_no_trigger__nolapse_notrigger + cellno_lapse_no_trigger__nolapse_notrigger) / 2"
+  )
+```
+
+### Within online lapse_no_trigger: reclassified lapse < reclassified nolapse
+
+```{r}
+# 2011 < 2466
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "celllapse_no_trigger__lapse_notrigger < celllapse_no_trigger__nolapse_notrigger"
+  )
+```
+
+### Trigger effect
+
+```{r}
+# pooled lapse_notrigger < lapse_trigger
+# (2011 + 511) < 2016
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "(celllapse_no_trigger__lapse_notrigger + cellno_lapse_no_trigger__lapse_notrigger) / 2 < celllapse_trigger__lapse_trigger"
+  )
+```
+
+```{r}
+# online lapse untriggered (reclassified lapse) < online lapse triggered (reclassified lapse)
+# 2011 < 2016
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "celllapse_no_trigger__lapse_notrigger < celllapse_trigger__lapse_trigger"
+  )
+```
+
+```{r}
+# pooled nolapse_notrigger < nolapse_trigger
+# (2466 + 3626) < 2451
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "(celllapse_no_trigger__nolapse_notrigger + cellno_lapse_no_trigger__nolapse_notrigger) / 2 < celllapse_trigger__nolapse_trigger"
+  )
+```
+
+```{r}
+# online lapse untriggered (reclassified nolapse) < online lapse triggered (reclassified nolapse)
+# 2466 < 2451
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "celllapse_no_trigger__nolapse_notrigger < celllapse_trigger__nolapse_trigger"
+  )
+```
+
+```{r}
+# online no-lapse untriggered (reclassified nolapse) > online lapse triggered (reclassified nolapse)
+# 3626 > 2451
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "cellno_lapse_no_trigger__nolapse_notrigger > celllapse_trigger__nolapse_trigger"
+  )
+```
+
+```{r}
+# online nolapse untriggered (reclassified nolapse) > online lapse triggered (reclassified lapse)
+# 3626 > 2016
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "cellno_lapse_no_trigger__nolapse_notrigger > celllapse_trigger__lapse_trigger"
+  )
+```
+
+```{r}
+# online lapse triggered (reclsasified lapse) < online lapse triggered (reclassified nolapse)
+# 2016 < 2451
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "celllapse_trigger__lapse_trigger < celllapse_trigger__nolapse_trigger"
+  )
+```
+
+### Interaction
+
+> Is the trigger effect larger for reclassified nolapse than reclassified lapse?
+
+```{r}
+# interaction: trigger effect for nolapse > trigger effeeect for lapse
+# (2451 - 2466) > (2016 - 2011)
+fit_brm_item_dprime_cells |> 
+  hypothesis(
+    "(celllapse_trigger__nolapse_trigger - celllapse_no_trigger__nolapse_notrigger) > (celllapse_trigger__lapse_trigger - celllapse_no_trigger__lapse_notrigger)"
+  )
+```
+
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+# assign numeric ranks to the 4 online-SOS cells ordered by inferred depth
+df_item_slope = df_item_cells |> 
+  filter(cell %in% c(
+    "lapse_no_trigger__lapse_notrigger", # 2011 drift-resistant, untriggered
+    "lapse_no_trigger__nolapse_notrigger", # 2466 drift-driven, untriggered
+    "lapse_trigger__lapse_trigger", # 2016 drift-resistant, triggered
+    "lapse_trigger__nolapse_trigger" # 2451 drift-driven, triggered
+  )) |> 
+  mutate(depth_rank = case_when(
+    cell == "lapse_no_trigger__lapse_notrigger" ~ 1,
+    cell == "lapse_no_trigger__nolapse_notrigger" ~ 2,
+    cell == "lapse_trigger__lapse_trigger" ~ 3,
+    cell == "lapse_trigger__nolapse_trigger" ~ 4
+  )) |> 
+  mutate(subid = dim.top_level__subject_id)
+
+fit_brm_item_dprime_slope = brm(
+  item_dp ~ depth_rank + (1 | subid),
+  data = df_item_slope,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_item_dprime_slope")
+)
+
+
+fit_brm_item_dprime_slope |> summary()
+fit_brm_item_dprime_slope |> plot(nvariables = 8)
+fit_brm_item_dprime_slope |> pp_check(ndraws = 100)
+fit_brm_item_dprime_slope |> hypothesis("depth_rank > 0")
+fit_brm_item_dprime_slope |> posterior_summary(pars = "b_depth_rank")
+
+plot_4cell_slope = fit_brm_item_dprime_slope |> 
+  spread_draws(b_depth_rank) |> 
+  ggplot(aes(x = b_depth_rank)) +
+  stat_halfeye(
+    fill = "steelblue",
+    alpha = 0.7,
+    point_interval = median_hdi,
+    .width = c(0.66, 0.9),
+    slab_alpha = 0.8,
+    normalize = "panels",
+    point_size = 4
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.66, color = "black") +
+  labs(
+    x = "Posterior slope (Δd\u2032 per step)",
+    y = NULL
+    # title = "Linear trend across 4 SOS cells"
+  )
+
+plot_4cell_slope
+```
+
+## Spline drift
+
+```{r fig.width=30, fig.height=15}
+run_labels = c(
+  "01" = "Run 1",
+  "02" = "Run 2",
+  "03" = "Run 3"
+)
+
+spline_fits = tar_read(spline_fits, store = here("_targets")) |> 
+  group_by(subject, run) |> 
+  mutate(
+    spline_pred_mc = spline_pred - mean(spline_pred, na.rm = TRUE)
+  ) |> 
+  ungroup() |> 
+  mutate(run_label = run_labels[run])
+
+avg_spline = tar_read(avg_spline, store = here("_targets")) |> 
+  mutate(run_label = run_labels[run])
+
+
+avg_spline_mc = spline_fits |> 
+  group_by(run, run_label, run_sample) |> 
+  summarise(
+    mean_time = mean(time, na.rm = TRUE),
+    mean_spline = mean(spline_pred_mc, na.rm = TRUE),
+    se_spline = sd(spline_pred_mc, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+plot_spline_spaghetti = ggplot() +
+  geom_line(
+    data = spline_fits,
+    aes(x = time, y = spline_pred_mc, group = subject),
+    alpha = 0.25, linewidth = 0.3, color = "grey50"
+  ) +
+  geom_ribbon(
+    data = avg_spline_mc,
+    aes(x = mean_time, ymin = mean_spline - se_spline, ymax = mean_spline + se_spline),
+    alpha = 0.3, fill = "firebrick"
+  ) +
+  geom_line(
+    data = avg_spline_mc,
+    aes(x = mean_time, y = mean_spline),
+    color = "firebrick", linewidth = 1.2
+  ) +
+  facet_wrap(~run_label, scales = "free_x") +
+  labs(
+    x = "Time (s)",
+    y = "Spline-predicted pupil (a.u.)"
+  ) +
+  coord_cartesian(
+    xlim = c(0, 800)
+  )
+
+plot_spline_spaghetti
+```
+
+# Figure 3
+
+```{r fig.width=20, fig.height=15}
+row1 = plot_spline_spaghetti + plot_item_memory_contrasts_reclassified + plot_src_memory_contrasts_reclassified + plot_layout(widths = c(2, 1, 1))
+row2 = plot_spacer() + plot_dprime_bars + plot_4cell_slope + plot_spacer() + plot_layout(widths = c(1, 2, 2, 2))
+
+row1 / row2 +
+  plot_annotation(tag_levels = "a") &
+  theme(plot.tag = element_text(size = 32, face = "bold", family = "Inter"))
+
+ggsave(here("reports/figures/fig3.pdf"), width = 25, height = 13, dpi = 300, bg = "white")
+ggsave(here("reports/figures/fig3.png"), width = 25, height = 13, dpi = 300, bg = "white")
+```
+
+# Asymmetry test
+
+## Deep lapses
+
+```{r}
+# build d' per cell x constriction/dilation for deep lapse trials (2011 & 2016)
+
+df_item_asym = df_trials |> 
+  filter(
+    !dim.top_level__burn_in_trial,
+    !dim.ret_response_item_acc %in% c("blink", "NO_RESPONSE"),
+    !dim.top_level__detrended_status %in% "NA_notrigger",
+    (dim.trigger_condition == "lapse_no_trigger" & dim.top_level__detrended_status == "lapse_notrigger") |
+      (dim.trigger_condition == "lapse_trigger" & dim.top_level__detrended_status == "lapse_trigger"),
+    dim.realtime_window_status %in% c("constriction", "dilation")
+  ) |> 
+  mutate(
+    cell = paste(dim.trigger_condition, dim.realtime_window_status, sep = "__")
+  ) |> 
+  group_by(dim.top_level__subject_id, cell) |> 
+  summarise(
+    item_hit       = sum(dim.ret_response_item_acc == "Item Hit"),
+    item_miss      = sum(dim.ret_response_item_acc == "Item Miss"),
+    item_fa        = sum(dim.ret_response_item_acc == "Item FA"),
+    item_cr        = sum(dim.ret_response_item_acc == "Item CR"),
+    n_item_target  = sum(dim.top_level__enc_goal %in% c("BGSM", "PLUP")),
+    n_item_foil    = sum(dim.top_level__enc_goal == "NOV"),
+    n_item_total   = item_hit + item_miss + item_fa + item_cr,
+    .groups        = "drop"
+  ) %>%
+  mutate(
+    item_dp  = calc_dprime(item_hit, item_fa, n_item_target, n_item_foil),
+    cell = factor(cell, levels = c(
+      "lapse_no_trigger__constriction",    # 2011
+      "lapse_no_trigger__dilation",    # 2011
+      "lapse_trigger__constriction",         # 2016
+      "lapse_trigger__dilation"         # 2016
+    ))
+  )
+
+table(df_item_asym$cell)
+```
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+fit_brm_item_dprime_asym = brm(
+  item_dp ~ 0 + cell,
+  data = df_item_asym,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_item_dprime_asym")
+)
+
+fit_brm_item_dprime_asym |> summary()
+fit_brm_item_dprime_asym |> plot(nvariables = 8)
+fit_brm_item_dprime_asym |> pp_check(ndraws = 100)
+fit_brm_item_dprime_asym |> emmeans(pairwise ~ cell)
+```
+
+```{r}
+# trigger boost for constrictions (2011 constrictoin > 2016 constriction)
+fit_brm_item_dprime_asym |> 
+  hypothesis(
+    "celllapse_trigger__constriction > celllapse_no_trigger__constriction"
+  )
+```
+
+```{r}
+# trigger boost for dilations (2011 dilation -> 2016 dilation)
+fit_brm_item_dprime_asym |> 
+  hypothesis(
+    "celllapse_trigger__dilation > celllapse_no_trigger__dilation"
+  )
+```
+
+```{r}
+# assymetry interaction: is the trigger boost larger for constrictions than dilations?
+# (trigger_con - notrigger_con) > (trigger_dil - notrigger_dil)
+fit_brm_item_dprime_asym |> 
+  hypothesis(
+    "(celllapse_trigger__constriction - celllapse_no_trigger__constriction) > (celllapse_trigger__dilation - celllapse_no_trigger__dilation)"
+  )
+```
+
+## All online SOS-trials
+
+```{r}
+# all online-lapse trials (triggered and untriggered) x constriction/dilation
+
+df_item_asym_all = df_trials |> 
+  filter(
+    !dim.top_level__burn_in_trial,
+    !dim.ret_response_item_acc %in% c("blink", "NO_RESPONSE"),
+    !dim.top_level__detrended_status %in% "NA_notrigger",
+    dim.trigger_condition %in% c("lapse_no_trigger", "lapse_trigger"),
+    dim.realtime_window_status %in% c("constriction", "dilation")
+  ) |> 
+  mutate(
+    triggered = if_else(dim.trigger_condition == "lapse_trigger", "triggered", "untriggered"),
+    cell = paste(triggered, dim.realtime_window_status, sep = "__")
+  ) |> 
+  group_by(dim.top_level__subject_id, cell) |> 
+  summarise(
+    item_hit       = sum(dim.ret_response_item_acc == "Item Hit"),
+    item_miss      = sum(dim.ret_response_item_acc == "Item Miss"),
+    item_fa        = sum(dim.ret_response_item_acc == "Item FA"),
+    item_cr        = sum(dim.ret_response_item_acc == "Item CR"),
+    n_item_target  = sum(dim.top_level__enc_goal %in% c("BGSM", "PLUP")),
+    n_item_foil    = sum(dim.top_level__enc_goal == "NOV"),
+    n_item_total   = item_hit + item_miss + item_fa + item_cr,
+    .groups        = "drop"
+  ) %>%
+  mutate(
+    item_dp  = calc_dprime(item_hit, item_fa, n_item_target, n_item_foil),
+    cell = factor(cell, levels = c(
+      "untriggered__constriction",    
+      "untriggered__dilation",    
+      "triggered__constriction",         
+      "triggered__dilation"         
+    ))
+  )
+
+table(df_item_asym_all$cell)
+```
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+fit_brm_item_dprime_asym_all = brm(
+  item_dp ~ 0 + cell,
+  data = df_item_asym_all,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_item_dprime_asym_all_lapse")
+)
+
+fit_brm_item_dprime_asym_all |> summary()
+fit_brm_item_dprime_asym_all |> plot(nvariables = 8)
+fit_brm_item_dprime_asym_all |> pp_check(ndraws = 100)
+fit_brm_item_dprime_asym_all |> emmeans(pairwise ~ cell)
+```
+
+```{r}
+# trigger boost for constrictions (all lapse trials)
+fit_brm_item_dprime_asym_all |> 
+  hypothesis(
+    "celltriggered__constriction > celluntriggered__constriction"
+  )
+```
+
+```{r}
+# trigger boost for dilations (all lapse trials)
+fit_brm_item_dprime_asym_all |> 
+  hypothesis(
+    "celltriggered__dilation > celluntriggered__dilation"
+  )
+```
+
+```{r}
+# asymmetry interaction (all lapse): trigger boost larger for constrictions than dilations?
+fit_brm_item_dprime_asym_all |> 
+  hypothesis(
+    "(celltriggered__constriction - celluntriggered__constriction) > (celltriggered__dilation - celluntriggered__dilation)"
+  )
+```
+
+## Driven-driven SOS only
+
+```{r}
+df_item_asym_moderate = df_trials |> 
+  filter(
+    !dim.top_level__burn_in_trial,
+    !dim.ret_response_item_acc %in% c("blink", "NO_RESPONSE"),
+    !dim.top_level__detrended_status %in% "NA_notrigger",
+    (dim.trigger_condition == "lapse_no_trigger" & dim.top_level__detrended_status == "nolapse_notrigger") |
+      (dim.trigger_condition == "lapse_trigger" & dim.top_level__detrended_status == "nolapse_trigger"),
+    dim.realtime_window_status %in% c("constriction", "dilation")
+  ) |> 
+  mutate(
+    triggered = if_else(dim.trigger_condition == "lapse_trigger", "triggered", "untriggered"),
+    cell = paste(triggered, dim.realtime_window_status, sep = "__")
+  ) |> 
+  group_by(dim.top_level__subject_id, cell) |> 
+  summarise(
+    item_hit       = sum(dim.ret_response_item_acc == "Item Hit"),
+    item_miss      = sum(dim.ret_response_item_acc == "Item Miss"),
+    item_fa        = sum(dim.ret_response_item_acc == "Item FA"),
+    item_cr        = sum(dim.ret_response_item_acc == "Item CR"),
+    n_item_target  = sum(dim.top_level__enc_goal %in% c("BGSM", "PLUP")),
+    n_item_foil    = sum(dim.top_level__enc_goal == "NOV"),
+    n_item_total   = item_hit + item_miss + item_fa + item_cr,
+    .groups        = "drop"
+  ) %>%
+  mutate(
+    item_dp  = calc_dprime(item_hit, item_fa, n_item_target, n_item_foil),
+    cell = factor(cell, levels = c(
+      "untriggered__constriction",
+      "untriggered__dilation",    
+      "triggered__constriction",   
+      "triggered__dilation"        
+    ))
+  )
+
+table(df_item_asym_moderate$cell)
+```
+
+```{r fig.width=15, fig.height=15, fig.dpi=72}
+fit_brm_item_dprime_asym_moderate = brm(
+  item_dp ~ 0 + cell,
+  data = df_item_asym_moderate,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  seed = 512,
+  iter = 4000,
+  warmup = 1000,
+  file = here("models/brm_item_dprime_asym_moderate")
+)
+
+fit_brm_item_dprime_asym_moderate |> summary()
+fit_brm_item_dprime_asym_moderate |> plot(nvariables = 8)
+fit_brm_item_dprime_asym_moderate |> pp_check(ndraws = 100)
+fit_brm_item_dprime_asym_moderate |> emmeans(pairwise ~ cell)
+```
+
+```{r}
+# trigger boost for constrictions (drift-driven SOS)
+fit_brm_item_dprime_asym_moderate |> 
+  hypothesis(
+    "celltriggered__constriction > celluntriggered__constriction"
+  )
+```
+
+```{r}
+# trigger boost for dilations (drift-driven SOS)
+fit_brm_item_dprime_asym_moderate |> 
+  hypothesis(
+    "celltriggered__dilation > celluntriggered__dilation"
+  )
+```
+
+```{r}
+# asymmetry interaction (drift-driven SOS): trigger boost larger for constrictions than dilations?
+fit_brm_item_dprime_asym_moderate |> 
+  hypothesis(
+    "(celltriggered__constriction - celluntriggered__constriction) > (celltriggered__dilation - celluntriggered__dilation)"
+  )
+```
+
