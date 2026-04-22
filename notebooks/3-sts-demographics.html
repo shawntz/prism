@@ -359,7 +359,8 @@ display: none;
 
 <pre class="r"><code>df_demographics = &quot;data/processed/phenotype/demographics_exclusions_n67.csv&quot; |&gt;
   here() |&gt; 
-  read_csv()</code></pre>
+  read_csv() |&gt; 
+  filter(exclude != &quot;failed_vision_test&quot;)</code></pre>
 <pre><code>## Rows: 82 Columns: 4
 ## ── Column specification ────────────────────────────────────────────────────────
 ## Delimiter: &quot;,&quot;
@@ -381,15 +382,15 @@ display: none;
 <div id="total-enrolled-in-study" class="section level2">
 <h2>total enrolled in study</h2>
 <pre class="r"><code>df_demographics |&gt; nrow()</code></pre>
-<pre><code>## [1] 82</code></pre>
+<pre><code>## [1] 79</code></pre>
 <pre class="r"><code>table(df_demographics$sex)</code></pre>
 <pre><code>## 
 ## female   male 
-##     55     27</code></pre>
+##     54     25</code></pre>
 <pre class="r"><code>mean(df_demographics$age) |&gt; round(2)</code></pre>
 <pre><code>## [1] 21.73</code></pre>
 <pre class="r"><code>sd(df_demographics$age) |&gt; round(2)</code></pre>
-<pre><code>## [1] 1.89</code></pre>
+<pre><code>## [1] 1.92</code></pre>
 <pre class="r"><code>min(df_demographics$age) </code></pre>
 <pre><code>## [1] 18</code></pre>
 <pre class="r"><code>max(df_demographics$age)</code></pre>
@@ -399,14 +400,14 @@ display: none;
 <h2>exclusions</h2>
 <pre class="r"><code>table(df_demographics$exclude)</code></pre>
 <pre><code>## 
-##               didnt_follow_task_instrux                      failed_vision_test 
-##                                       2                                       3 
-##                       fewer_trials_2sds                        more_trials_2sds 
-##                                       5                                       1 
-## more_trials_2sds_and_itemdp_zero_or_neg                                      no 
-##                                       1                                      67 
-##                       srcdp_zero_or_neg                                withdrew 
-##                                       1                                       2</code></pre>
+##               didnt_follow_task_instrux                       fewer_trials_2sds 
+##                                       2                                       5 
+##                        more_trials_2sds more_trials_2sds_and_itemdp_zero_or_neg 
+##                                       1                                       1 
+##                                      no                       srcdp_zero_or_neg 
+##                                      67                                       1 
+##                                withdrew 
+##                                       2</code></pre>
 </div>
 
 

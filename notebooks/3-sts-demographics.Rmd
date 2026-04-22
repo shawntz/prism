@@ -14,7 +14,8 @@ library(tidyverse)
 ```{r}
 df_demographics = "data/processed/phenotype/demographics_exclusions_n67.csv" |>
   here() |> 
-  read_csv()
+  read_csv() |> 
+  filter(exclude != "failed_vision_test")
 
 df_demographics |> head()
 ```
